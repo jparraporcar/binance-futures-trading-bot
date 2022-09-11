@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[201]:
+# In[2]:
 
 
 import ta
@@ -19,12 +19,13 @@ from string import ascii_uppercase
 from itertools import product
 
 
-# In[215]:
+# In[3]:
 
 
 class Macd_long_backtester():
     
-    """Macd class for backtesting strategies
+    '''
+    Macd class for backtesting strategies
     How to use this class:
     1) Use 'prepare_data' method:
         INPUTS
@@ -63,10 +64,8 @@ class Macd_long_backtester():
     SUMMARY:
     
     FIRST: points 1) 2.1) and 2.2) --> trends analysis and get period for analysis
-    SECOND: points 1) and 3) --> new class instance for backtesting with period get in 'FIRST'
-    
-    
-    """
+    SECOND: points 1) and 3) --> new class instance for backtesting with period get in 'FIRST'  
+    '''
     
     def __init__(self, start=None, end=None, symbol=None):
         
@@ -312,9 +311,3 @@ class Macd_long_backtester():
 # 
 # 
 # 
-
-# In[ ]:
-
-
-
-
