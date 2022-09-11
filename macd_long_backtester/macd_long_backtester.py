@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[2]:
+# In[97]:
 
 
 import ta
@@ -19,7 +19,7 @@ from string import ascii_uppercase
 from itertools import product
 
 
-# In[3]:
+# In[98]:
 
 
 class Macd_long_backtester():
@@ -128,6 +128,7 @@ class Macd_long_backtester():
     
     def assign_trends(self, window_size=5, plot=False):
         '''
+        REQUIREMENT: execute after "prepare_data" method
         Function that creates new columns to the data_init field, and prints the plot to show the trends
         in the price/time plot.
         :param window_size: a trend that has a window higher than the introduced number is assigned.
@@ -191,15 +192,19 @@ class Macd_long_backtester():
             ax.annotate(label, (xcoord, max_close*1/4))
 
         self.trend_assigned = True
-            
-    def get_trend_dates(self, type=None, trend_ref=None):
+    
+    def get_trend_dates(self, type=None, trend_ref=None, do_plot=False):
+        
         '''
+        REQUIREMENT: execute after "assign_trends" method
         Once the trends have been assigned in data_init, in this function the type of trend seen in the trends chart
         and its trend_ref ('A', 'B', 'AA'...), are given and, as output we receive the start and the end dates of the trend.
         :param type: valid fields are 'Up Trend', 'Down Trend' and 'Sideways'
         :type type: str.
         :param trend_ref: letter/s that have been assigned in the 'Up Trend' and 'Down Trend' columns in data_init
         :type type: str.
+        :param plot: if True, plots the selected trend
+        :param type: bool.
         
         :return a tuple with two integers representing the time in milliseconds since the epoch for the start and end period.
         '''
@@ -207,20 +212,34 @@ class Macd_long_backtester():
         if (type == 'Up Trend'):
             date_init = self.data_init.loc[self.data_init['Up Trend'] == trend_ref].index[0]
             date_end = self.data_init.loc[self.data_init['Up Trend'] == trend_ref].index[-1]
+            if (do_plot == True):
+                mask1 = (self.data_init.index >= date_init) 
+                mask2 = (self.data_init.index <= date_end) 
+                self.data_init.Close[mask1 & mask2].plot(figsize=(15,10))
+
         if (type == 'Down Trend'):
             date_init = self.data_init.loc[self.data_init['Down Trend'] == trend_ref].index[0]
             date_end = self.data_init.loc[self.data_init['Down Trend'] == trend_ref].index[-1]
+            if (do_plot == True):
+                mask1 = (self.data_init.index >= date_init) 
+                mask2 = (self.data_init.index <= date_end) 
+                self.data_init.Close[mask1 & mask2].plot(figsize=(15,10)) 
+                
         if (type == 'sideways'):
             #the letters are in both columns so it does not matter which column it is accesed
             date_init = self.data_init.loc[self.data_init['Up Trend'] == trend_ref].index[0]
             date_end = self.data_init.loc[self.data_init['Up Trend'] == trend_ref].index[-1]
+            if (do_plot == True):
+                mask1 = (self.data_init.index >= date_init) 
+                mask2 = (self.data_init.index <= date_end) 
+                self.data_init.Close[mask1 & mask2].plot(figsize=(15,10))            
    
         date_init_int = int(date_init.timestamp()*1000)
         date_end_int = int(date_end.timestamp()*1000)
        
         print('date_init:', date_init, date_init_int)
         print('date_end:', date_end, date_end_int)    
-            
+                                
         return (date_init_int, date_end_int)
 
     
@@ -235,6 +254,9 @@ class Macd_long_backtester():
         self.trend_assigned = False
         
     def execute_backtest(self):
+        '''
+        REQUIREMENT: execute after "prepare_data" method
+        '''
         #stablish neutral conditions
         ht_pos = self.data_init.macd_diff.shift(1) > 0
         ht_plusone_neg = self.data_init.macd_diff < 0
@@ -288,7 +310,7 @@ class Macd_long_backtester():
 # 
 # __2) macd_inst.prepare_data(interval='1d', start='2018-10-29-20:00', end='2022-08-29-20:00', ema_slow=24, ema_fast=12, ema_signal=9)__<br>
 # 
-# __3) macd_inst.assign_trend(window_size=60, plot=True)__<br>
+# __3) macd_inst.assign_trends(window_size=60, plot=True)__<br>
 # 
 # __4) macd_inst.execute_backtest() = (3.2042562870505837, 4.8108773219256085, 4.41872336884791)__<br>
 # 
