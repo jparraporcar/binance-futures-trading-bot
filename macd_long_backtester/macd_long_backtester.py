@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[68]:
+# In[103]:
 
 
 import ta
@@ -19,7 +19,7 @@ from string import ascii_uppercase
 from itertools import product
 
 
-# In[78]:
+# In[106]:
 
 
 class Macd_long_backtester():
@@ -64,7 +64,7 @@ class Macd_long_backtester():
     SUMMARY:
     
     FIRST: points 1) 2.1) and 2.2) --> trends analysis and get period for analysis
-    SECOND: points 1) and 3) --> new class instance for backtesting with period get in 'FIRST'  
+    SECOND: points 1) and 3) --> new class instance for backtesting with period obtained with get_trend_dates 
     '''
     
     def __init__(self,symbol=None):
@@ -91,6 +91,7 @@ class Macd_long_backtester():
         self.ema_slow = None
         self.ema_fast = None
         self.ema_signal = None
+        self.opt_results = None
     
     def __repr__(self):
         return f"Macd_long_backtester(symbol={self.symbol})"
@@ -313,7 +314,42 @@ class Macd_long_backtester():
         multiple_macd_strategy_net = np.exp(self.data_init.macd_log_returns_net.sum())
         tuple_return = (multiple_hold, multiple_macd_strategy, multiple_macd_strategy_net)
 
-        return tuple_return 
+        return tuple_return
+    
+    def execute_opt(self, start_opt=None, end_opt=None, interval_opt=None, ema_slow_opt=None, ema_fast_opt=None, ema_sign_opt=None, int_for_max=None):
+       
+        interval_opt = interval_opt
+        macd_slow_opt = range(*ema_slow_opt)
+        macd_fast_opt = range(*ema_fast_opt)
+        macd_signal_opt = range(*ema_sign_opt)
+        combinations = list(product(interval_opt, macd_slow_opt, macd_fast_opt, macd_signal_opt))
+        
+        results = []
+        for comb in combinations:
+            self.prepare_data(start=start_opt, end=end_opt, interval=comb[0])
+            results.append(self.execute_backtest(comb[1], comb[2], comb[3]))
+
+        combinations_df = pd.DataFrame(data=combinations, columns=['interval_opt', 'macd_slow_opt', 'macd_fast_opt', 'macd_signal_opt'])
+        many_results_df = pd.DataFrame(data=results, columns = ['multiple_hold', 'multiple_macd_strategy', 'multiple_macd_strategy_net'])
+        mg=pd.merge(combinations_df,many_results_df, how='inner', left_index=True, right_index=True)
+        #Filtering only meaningfull combinations
+        cond1 = mg.multiple_macd_strategy != 1 #not enough data to carry out a single crossover
+        cond2 = mg.macd_slow_opt > mg.macd_fast_opt
+        mg_filt = mg.loc[cond1&cond2].copy()
+        self.opt_results = mg_filt
+        
+        #only show results for desired interval
+        cond3 = mg_filt.interval_opt == int_for_max
+        mg_desired_interval = mg_filt[cond3].copy()
+        
+        cond_max = mg_desired_interval.multiple_macd_strategy == mg_desired_interval.multiple_macd_strategy.max()
+        multiple_macd_strategy_opt_max = mg_desired_interval[cond_max]
+        
+        cond_net_max = mg_desired_interval.multiple_macd_strategy_net == mg_desired_interval.multiple_macd_strategy_net.max()
+        multiple_macd_strategy_net_opt_max = mg_desired_interval[cond_net_max]
+        
+        self.multiple_macd_strategy_max = multiple_macd_strategy_opt_max
+        self.multiple_macd_strategy_net_max = multiple_macd_strategy_net_opt_max
 
 
 # ## Results tested against the result coming from the file '2022Sep3th_BTC_MACD_long_only_CHECK_OK_Working' and it is the same result for the given paramaters: <br>
@@ -324,7 +360,7 @@ class Macd_long_backtester():
 # 
 # __3) macd_inst.assign_trends(window_size=60, plot=True)__<br>
 # 
-# __4) macd_inst.execute_backtest(ma_slow=24, ema_fast=12, ema_signal=9) = (3.2042562870505837, 4.8108773219256085, 4.41872336884791)__<br>
+# __4) macd_inst.execute_backtest(ema_slow=24, ema_fast=12, ema_signal=9) = (3.2042562870505837, 4.8108773219256085, 4.41872336884791)__<br>
 # 
 # __And now results coming from the mentioned file: <br>
 # '2022Sep3th_BTC_MACD_long_only_CHECK_OK_Working':__ <br>
@@ -345,9 +381,3 @@ class Macd_long_backtester():
 # 
 # 
 # 
-
-# In[ ]:
-
-
-
-
