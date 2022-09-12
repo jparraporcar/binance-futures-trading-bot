@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[97]:
+# In[68]:
 
 
 import ta
@@ -19,7 +19,7 @@ from string import ascii_uppercase
 from itertools import product
 
 
-# In[98]:
+# In[78]:
 
 
 class Macd_long_backtester():
@@ -67,7 +67,7 @@ class Macd_long_backtester():
     SECOND: points 1) and 3) --> new class instance for backtesting with period get in 'FIRST'  
     '''
     
-    def __init__(self, start=None, end=None, symbol=None):
+    def __init__(self,symbol=None):
         
         """Macd long backtester constructor
         :param symbol: symbol from Binance from which to extract the data, .i.e. 'BTCUSDT'
@@ -84,18 +84,23 @@ class Macd_long_backtester():
         self.symbol = symbol
         self.data_init = pd.DataFrame()
         self.trend_assigned = None
-        self.prepared_data_interval = None
-
+        self.interval = None
+        #Read-only paramters below, only informative of the last data prepared
+        self.start = None
+        self.end = None
+        self.ema_slow = None
+        self.ema_fast = None
+        self.ema_signal = None
     
     def __repr__(self):
         return f"Macd_long_backtester(symbol={self.symbol})"
 
-    def prepare_data(self, start=None, end=None, interval=None, ema_slow=None, ema_fast=None, ema_signal=None):
+    def prepare_data(self, start=None, end=None, interval=None):
         '''Prepare all the fields of data necessary for the study. The interval of dates to be studied is the one
         given when delclaring the class. To prepare another interval of dates, please create another class instance.
-        :param start: a string with the following format ""%Y-%m-%d-%H:%M:%S" .i.e. "2022-01-29-20:00:00"
+        :param start: a string with the following format ""%Y-%m-%d-%H:%M" .i.e. "2022-01-29-20:00"
         :type start: str.
-        :param end: a string with the following format ""%Y-%m-%d-%H:%M:%S" .i.e. "2022-02-29-20:00:00"
+        :param end: a string with the following format ""%Y-%m-%d-%H:%M" .i.e. "2022-02-29-20:00"
         :type end: str.
         :param interval: string among the followings: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]
         :type interval: str.
@@ -106,42 +111,36 @@ class Macd_long_backtester():
         :param ema_signal: integer representing the length of the ema for the macd signal
         :type ema_signal: int.
         '''
+
         self.start = start
         self.end = end
+        self.interval = interval
         from_time = int(datetime.strptime(start, "%Y-%m-%d-%H:%M").timestamp()*1000)
         to_time = int(datetime.strptime(end, "%Y-%m-%d-%H:%M").timestamp()*1000)
-        self.prepared_data_interval = interval
         self.data_init = utils.get_history_v2(symbol=self.symbol, interval=interval, start=from_time, end=to_time)[0]
-        #obtaining MACD instance from python ta
-        macd_diff = ta.trend.MACD(close=self.data_init.Close, window_slow=ema_slow, window_fast=ema_fast, window_sign=ema_signal, fillna=False).macd_diff()
-        macd_macd = ta.trend.MACD(close=self.data_init.Close, window_slow=ema_slow, window_fast=ema_fast, window_sign=ema_signal, fillna=False).macd()
-        macd_signal = ta.trend.MACD(close=self.data_init.Close, window_slow=ema_slow, window_fast=ema_fast, window_sign=ema_signal, fillna=False).macd_signal()
-        #assigning the values of macd to ticker dataframe
-        self.data_init['macd_diff'] = macd_diff
-        self.data_init['macd_macd'] = macd_macd
-        self.data_init['macd_signal'] = macd_signal
         self.data_init['log_returns_hold'] = np.log(self.data_init.Close.div(self.data_init.Close.shift(1)))
         self.data_init['multiple_hold_acum'] = np.exp(self.data_init.log_returns_hold.cumsum())
         #initialize positions and sign_inv
         self.data_init['position'] = 0
         self.data_init['inv_sign'] = 0
     
-    def assign_trends(self, window_size=5, plot=False):
+    def assign_trends(self, window_size=12, plot=False):
         '''
-        REQUIREMENT: execute after "prepare_data" method
-        Function that creates new columns to the data_init field, and prints the plot to show the trends
-        in the price/time plot.
+        REQUIREMENT: execute after "prepare_data" method AND a minimum window size of 12 days
         :param window_size: a trend that has a window higher than the introduced number is assigned.
         :type window_size: int.
         '''
+        if (window_size < 12):
+            print('Minimum window size is 12 (calculated with BTCUSDT so far)')
+            return
         
         #THE SAMPLING INTERVAL MUST BE DAILY IN ORDER FOR THE ALGORITH TO WORK (AS FAR AS I KNOW)
-        if (self.prepared_data_interval != '1d'):
-            print("The interval that has to be used for preparing the data is '1d'")
+        if (self.interval != '1d'):
+            print("The interval that has to be used to assign trends is '1d'")
             return
         
         if (self.trend_assigned == True): 
-            print("The trends have already been assigned, please execute first 'clean_assign_trend' before executing this method again")
+            print("The trends have already been assigned, please execute first 'clean_assign_trend' before executing            this method again")
             return
         
         sns.set(style='darkgrid')
@@ -170,7 +169,8 @@ class Macd_long_backtester():
 
         increase_letter = False
         side_labels = []
-        i = 0       
+        i = 0     
+        
         for index, data in res.iterrows():
             if (not isinstance(data['Up Trend'], str) and not isinstance(data['Down Trend'], str)):
                 if (increase_letter == True):
@@ -253,10 +253,22 @@ class Macd_long_backtester():
         self.data_init.drop(columns=['Up Trend', 'Down Trend'], inplace=True)
         self.trend_assigned = False
         
-    def execute_backtest(self):
+    def execute_backtest(self, ema_slow=None, ema_fast=None, ema_signal=None):
         '''
         REQUIREMENT: execute after "prepare_data" method
         '''
+        #Assign the MACD parameters to the class to see which para,tershave been used last
+        self.ema_slow = ema_slow
+        self.ema_fast = ema_fast
+        self.ema_signal = ema_signal 
+        #obtaining MACD instance from python ta
+        macd_diff = ta.trend.MACD(close=self.data_init.Close, window_slow=ema_slow, window_fast=ema_fast, window_sign=ema_signal, fillna=False).macd_diff()
+        macd_macd = ta.trend.MACD(close=self.data_init.Close, window_slow=ema_slow, window_fast=ema_fast, window_sign=ema_signal, fillna=False).macd()
+        macd_signal = ta.trend.MACD(close=self.data_init.Close, window_slow=ema_slow, window_fast=ema_fast, window_sign=ema_signal, fillna=False).macd_signal()
+        #assigning the values of macd to ticker dataframe
+        self.data_init['macd_diff'] = macd_diff
+        self.data_init['macd_macd'] = macd_macd
+        self.data_init['macd_signal'] = macd_signal        
         #stablish neutral conditions
         ht_pos = self.data_init.macd_diff.shift(1) > 0
         ht_plusone_neg = self.data_init.macd_diff < 0
@@ -308,11 +320,11 @@ class Macd_long_backtester():
 # 
 # __1) macd_inst = Macd_long_backtester(symbol='BTCUSDT')__<br>
 # 
-# __2) macd_inst.prepare_data(interval='1d', start='2018-10-29-20:00', end='2022-08-29-20:00', ema_slow=24, ema_fast=12, ema_signal=9)__<br>
+# __2) macd_inst.prepare_data(interval='1d', start='2018-10-29-20:00', end='2022-08-29-20:00')__<br>
 # 
 # __3) macd_inst.assign_trends(window_size=60, plot=True)__<br>
 # 
-# __4) macd_inst.execute_backtest() = (3.2042562870505837, 4.8108773219256085, 4.41872336884791)__<br>
+# __4) macd_inst.execute_backtest(ma_slow=24, ema_fast=12, ema_signal=9) = (3.2042562870505837, 4.8108773219256085, 4.41872336884791)__<br>
 # 
 # __And now results coming from the mentioned file: <br>
 # '2022Sep3th_BTC_MACD_long_only_CHECK_OK_Working':__ <br>
@@ -333,3 +345,9 @@ class Macd_long_backtester():
 # 
 # 
 # 
+
+# In[ ]:
+
+
+
+
