@@ -18,7 +18,7 @@ The structure of optimization results storing is the following, using BTCUSDT Bi
 
 ## Structure of optimization results filename
 
-"RES_filecreationtime_symbolname_trendtype_trendletter_date_start&date_end_interval
+"RES_filecreationtime_symbolname_trendtype_trendletter_date_start&date_end_interval#
 
 Note: data format for 'start' and 'end' --> %Y-%m-%d-%H:%M:%S
 
@@ -26,7 +26,7 @@ Note: data format for 'start' and 'end' --> %Y-%m-%d-%H:%M:%S
 
 ### Structure of file for calculations
 
-"CALC_filecreationtime_symbolname"
+"CALC__filecreationtime__symbolname__trendtype__ws__trendletter__date_start_to_date_end__intervalrg__emaslowrg__emafastrg__emasignrg"
 
 This file is used to do all the necessary calculations to extract then the filtered results by trend, interval, period
 

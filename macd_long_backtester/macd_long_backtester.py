@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[103]:
+# In[113]:
 
 
 import ta
@@ -17,9 +17,10 @@ import utils as utils
 import math
 from string import ascii_uppercase
 from itertools import product
+import os
 
 
-# In[106]:
+# In[147]:
 
 
 class Macd_long_backtester():
@@ -85,6 +86,8 @@ class Macd_long_backtester():
         self.data_init = pd.DataFrame()
         self.trend_assigned = None
         self.interval = None
+        self.type_trend = None
+        self.trend_ref = None
         #Read-only paramters below, only informative of the last data prepared
         self.start = None
         self.end = None
@@ -194,7 +197,7 @@ class Macd_long_backtester():
 
         self.trend_assigned = True
     
-    def get_trend_dates(self, type=None, trend_ref=None, do_plot=False):
+    def get_trend_dates(self, type_trend=None, trend_ref=None, do_plot=False):
         
         '''
         REQUIREMENT: execute after "assign_trends" method
@@ -210,7 +213,7 @@ class Macd_long_backtester():
         :return a tuple with two integers representing the time in milliseconds since the epoch for the start and end period.
         '''
         
-        if (type == 'Up Trend'):
+        if (type_trend == 'Up Trend'):
             date_init = self.data_init.loc[self.data_init['Up Trend'] == trend_ref].index[0]
             date_end = self.data_init.loc[self.data_init['Up Trend'] == trend_ref].index[-1]
             if (do_plot == True):
@@ -218,7 +221,7 @@ class Macd_long_backtester():
                 mask2 = (self.data_init.index <= date_end) 
                 self.data_init.Close[mask1 & mask2].plot(figsize=(15,10))
 
-        if (type == 'Down Trend'):
+        if (type_trend == 'Down Trend'):
             date_init = self.data_init.loc[self.data_init['Down Trend'] == trend_ref].index[0]
             date_end = self.data_init.loc[self.data_init['Down Trend'] == trend_ref].index[-1]
             if (do_plot == True):
@@ -226,7 +229,7 @@ class Macd_long_backtester():
                 mask2 = (self.data_init.index <= date_end) 
                 self.data_init.Close[mask1 & mask2].plot(figsize=(15,10)) 
                 
-        if (type == 'sideways'):
+        if (type_trend == 'sideways'):
             #the letters are in both columns so it does not matter which column it is accesed
             date_init = self.data_init.loc[self.data_init['Up Trend'] == trend_ref].index[0]
             date_end = self.data_init.loc[self.data_init['Up Trend'] == trend_ref].index[-1]
@@ -237,6 +240,8 @@ class Macd_long_backtester():
    
         date_init_int = int(date_init.timestamp()*1000)
         date_end_int = int(date_end.timestamp()*1000)
+        self.trend_type = type_trend
+        self.trend_ref = trend_ref
        
         print('date_init:', date_init, date_init_int)
         print('date_end:', date_end, date_end_int)    
@@ -316,7 +321,7 @@ class Macd_long_backtester():
 
         return tuple_return
     
-    def execute_opt(self, start_opt=None, end_opt=None, interval_opt=None, ema_slow_opt=None, ema_fast_opt=None, ema_sign_opt=None, int_for_max=None):
+    def execute_opt(self, start_opt=None, end_opt=None, interval_opt=None, ema_slow_opt=None, ema_fast_opt=None, ema_sign_opt=None, int_for_max=None, type_trend=None, trend_ref=None):
        
         interval_opt = interval_opt
         macd_slow_opt = range(*ema_slow_opt)
@@ -327,16 +332,18 @@ class Macd_long_backtester():
         results = []
         for comb in combinations:
             self.prepare_data(start=start_opt, end=end_opt, interval=comb[0])
-            results.append(self.execute_backtest(comb[1], comb[2], comb[3]))
+            tuple_results = (*self.execute_backtest(comb[1], comb[2], comb[3]), trend_ref)
+            results.append(tuple_results)
 
         combinations_df = pd.DataFrame(data=combinations, columns=['interval_opt', 'macd_slow_opt', 'macd_fast_opt', 'macd_signal_opt'])
-        many_results_df = pd.DataFrame(data=results, columns = ['multiple_hold', 'multiple_macd_strategy', 'multiple_macd_strategy_net'])
+        many_results_df = pd.DataFrame(data=results, columns = ['multiple_hold', 'multiple_macd_strategy', 'multiple_macd_strategy_net', 'trend_ref'])
         mg=pd.merge(combinations_df,many_results_df, how='inner', left_index=True, right_index=True)
         #Filtering only meaningfull combinations
         cond1 = mg.multiple_macd_strategy != 1 #not enough data to carry out a single crossover
         cond2 = mg.macd_slow_opt > mg.macd_fast_opt
         mg_filt = mg.loc[cond1&cond2].copy()
-        self.opt_results = mg_filt
+        self.opt_results = mg_filt.copy()
+        self.opt_comb_num = len(combinations)
         
         #only show results for desired interval
         cond3 = mg_filt.interval_opt == int_for_max
@@ -350,6 +357,13 @@ class Macd_long_backtester():
         
         self.multiple_macd_strategy_max = multiple_macd_strategy_opt_max
         self.multiple_macd_strategy_net_max = multiple_macd_strategy_net_opt_max
+
+        if os.path.exists(f"{type_trend}.csv"):
+            self.opt_results.to_csv(f"{type_trend}.csv", mode='a', index=False, header=False)
+        else:
+            self.opt_results.to_csv(f"{type_trend}.csv", mode='w', index=False, header=False)
+        
+        
 
 
 # ## Results tested against the result coming from the file '2022Sep3th_BTC_MACD_long_only_CHECK_OK_Working' and it is the same result for the given paramaters: <br>
