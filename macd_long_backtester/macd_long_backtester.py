@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[113]:
+# In[119]:
 
 
 import ta
@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import sys
 sys.path.append('/Users/jp/Desktop/Investment/utils')
 import utils as utils
@@ -18,9 +18,13 @@ import math
 from string import ascii_uppercase
 from itertools import product
 import os
+from binance.client import Client
+from binance.exceptions import *
+import requests as requests
+import time as time
 
 
-# In[147]:
+# In[120]:
 
 
 class Macd_long_backtester():
@@ -100,7 +104,9 @@ class Macd_long_backtester():
         return f"Macd_long_backtester(symbol={self.symbol})"
 
     def prepare_data(self, start=None, end=None, interval=None):
-        '''Prepare all the fields of data necessary for the study. The interval of dates to be studied is the one
+        '''
+        REMARK: Introduced time must be in Tokyo time (UTC+9) but the calculations will be in UTC
+        Prepare all the fields of data necessary for the study. The interval of dates to be studied is the one
         given when delclaring the class. To prepare another interval of dates, please create another class instance.
         :param start: a string with the following format ""%Y-%m-%d-%H:%M" .i.e. "2022-01-29-20:00"
         :type start: str.
@@ -108,12 +114,6 @@ class Macd_long_backtester():
         :type end: str.
         :param interval: string among the followings: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]
         :type interval: str.
-        :param ema_slow: integer representing the length of the ema for the slow part of the macd
-        :type ema_slow: int.
-        :param ema_fast: integer representing the length of the ema for the fast part of the macd
-        :type ema_fast: int.
-        :param ema_signal: integer representing the length of the ema for the macd signal
-        :type ema_signal: int.
         '''
 
         self.start = start
@@ -229,7 +229,7 @@ class Macd_long_backtester():
                 mask2 = (self.data_init.index <= date_end) 
                 self.data_init.Close[mask1 & mask2].plot(figsize=(15,10)) 
                 
-        if (type_trend == 'sideways'):
+        if (type_trend == 'Sideways'):
             #the letters are in both columns so it does not matter which column it is accesed
             date_init = self.data_init.loc[self.data_init['Up Trend'] == trend_ref].index[0]
             date_end = self.data_init.loc[self.data_init['Up Trend'] == trend_ref].index[-1]
@@ -313,16 +313,38 @@ class Macd_long_backtester():
         #calculate strategy returns
         self.data_init['macd_log_returns'] = self.data_init.log_returns_hold * self.data_init.position.shift(1)
         self.data_init['macd_log_returns_net'] = self.data_init.macd_log_returns + self.data_init.trades * trading_cost
+        self.data_init['macd_log_returns_acum'] = np.exp(self.data_init.macd_log_returns.cumsum())
+        self.data_init['macd_log_returns_net_acum'] = np.exp(self.data_init.macd_log_returns_net.cumsum())
+
         #calculating the function outputs
         multiple_hold = np.exp(self.data_init.log_returns_hold.sum())
+        ann_log_mean_hold = self.data_init.log_returns_hold.mean() * 365
+        ann_log_std_hold = self.data_init.log_returns_hold.std() * np.sqrt(365)
+        sharpe_ratio_hold = ann_log_mean_hold / ann_log_std_hold
+        
         multiple_macd_strategy = np.exp(self.data_init.macd_log_returns.sum())
+        ann_log_mean_macd = self.data_init.macd_log_returns.mean() * 365
+        ann_log_std_macd = self.data_init.macd_log_returns.std() * np.sqrt(365)
+        sharpe_ratio_macd = ann_log_mean_macd / ann_log_std_macd
+        
         multiple_macd_strategy_net = np.exp(self.data_init.macd_log_returns_net.sum())
-        tuple_return = (multiple_hold, multiple_macd_strategy, multiple_macd_strategy_net)
+        ann_log_mean_macd_net = self.data_init.macd_log_returns_net.mean() * 365
+        ann_log_std_macd_net = self.data_init.macd_log_returns_net.std() * np.sqrt(365)
+        sharpe_ratio_macd_net = ann_log_mean_macd_net / ann_log_std_macd_net
+        tuple_return = (multiple_hold, ann_log_mean_hold, ann_log_std_hold, sharpe_ratio_hold, multiple_macd_strategy, ann_log_mean_macd, ann_log_std_macd, sharpe_ratio_macd, multiple_macd_strategy_net, ann_log_mean_macd_net, ann_log_std_macd_net, sharpe_ratio_macd_net)
 
+        df_return = pd.DataFrame(data=[list(tuple_return)], columns=['multiple_hold', 'ann_log_mean_hold', 'ann_log_std_hold', 'sharpe_ratio_hold', 'multiple_macd_strategy', 'ann_log_mean_macd', 'ann_log_std_macd', 'sharpe_ratio_macd', 'multiple_macd_strategy_net', 'ann_log_mean_macd_net', 'ann_log_std_macd_net', 'sharpe_ratio_macd_net'])
+        print(df_return)
         return tuple_return
     
+    def plot_backtest_results(self):
+        
+        pass
+    
     def execute_opt(self, start_opt=None, end_opt=None, interval_opt=None, ema_slow_opt=None, ema_fast_opt=None, ema_sign_opt=None, int_for_max=None, type_trend=None, trend_ref=None):
-       
+        '''
+        REMARK: Introduced time must be in Tokyo time (UTC+9) but the calculations will be in UTC
+        '''
         interval_opt = interval_opt
         macd_slow_opt = range(*ema_slow_opt)
         macd_fast_opt = range(*ema_fast_opt)
@@ -331,12 +353,23 @@ class Macd_long_backtester():
         
         results = []
         for comb in combinations:
-            self.prepare_data(start=start_opt, end=end_opt, interval=comb[0])
-            tuple_results = (*self.execute_backtest(comb[1], comb[2], comb[3]), trend_ref)
-            results.append(tuple_results)
-
+            try:
+                self.prepare_data(start=start_opt, end=end_opt, interval=comb[0])
+                tuple_results = (*self.execute_backtest(comb[1], comb[2], comb[3]), trend_ref, start_opt, end_opt)
+                results.append(tuple_results)
+                print(f"processed {len(results)} out of a total {len(combinations)}")
+            except (BinanceAPIException, ConnectionResetError, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
+                    print('Something went wrong. Error occured at %s. Wait for 1 min.' % (datetime.now().astimezone(timezone.utc)))
+                    time.sleep(60)
+                    api_key = "Q3Zsx6rO7uy0YntyWjb9CTGxbQAfENBxbPAkeOtksXm2AcLcu1y7IOj1fgPFtutO"
+                    api_secret = "LeiOCoJdBuCtfgrt1WfsBweeyC2ZwuogPuDrkXFTioEGoaZYOGkju1GRM3yVqp7v"
+                    client = Client(api_key, api_secret)
+            except KeyboardInterrupt as e2:
+                    print("error type is 'KeyboardInterrupt'. The data calculated so far has been stored in self.opt_results")
+                    break
+        
         combinations_df = pd.DataFrame(data=combinations, columns=['interval_opt', 'macd_slow_opt', 'macd_fast_opt', 'macd_signal_opt'])
-        many_results_df = pd.DataFrame(data=results, columns = ['multiple_hold', 'multiple_macd_strategy', 'multiple_macd_strategy_net', 'trend_ref'])
+        many_results_df = pd.DataFrame(data=results, columns = ['multiple_hold', 'ann_log_mean_hold', 'ann_log_std_hold', 'sharpe_ratio_hold', 'multiple_macd_strategy', 'ann_log_mean_macd', 'ann_log_std_macd', 'sharpe_ratio_macd', 'multiple_macd_strategy_net', 'ann_log_mean_macd_net', 'ann_log_std_macd_net', 'sharpe_ratio_macd_net', 'trend_ref', 'start_opt', 'end_opt'])
         mg=pd.merge(combinations_df,many_results_df, how='inner', left_index=True, right_index=True)
         #Filtering only meaningfull combinations
         cond1 = mg.multiple_macd_strategy != 1 #not enough data to carry out a single crossover
@@ -359,9 +392,11 @@ class Macd_long_backtester():
         self.multiple_macd_strategy_net_max = multiple_macd_strategy_net_opt_max
 
         if os.path.exists(f"{type_trend}.csv"):
-            self.opt_results.to_csv(f"{type_trend}.csv", mode='a', index=False, header=False)
+            df_imported = pd.read_csv(f"{type_trend}.csv")
+            df_complete = pd.concat([df_imported, self.opt_results], axis = 0)
+            df_complete.to_csv(f"{type_trend}.csv", mode='w', index=False, header=True)
         else:
-            self.opt_results.to_csv(f"{type_trend}.csv", mode='w', index=False, header=False)
+            self.opt_results.to_csv(f"{type_trend}.csv", mode='w', index=False, header=True)
         
         
 

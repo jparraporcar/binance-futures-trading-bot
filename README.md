@@ -6,7 +6,7 @@
 
 The structure of optimization results storing is the following, using BTCUSDT Binance API symbol as an example:
 
-**/optimization/"symbol_name"/results/"trend_type"/"trendletter_date_start&date_end"/"interval"/**"filename"
+**/optimization/"symbol_name"/results/"trend_type"/**
 - trend_type: Up Trend, Down Trend, Sideways, If adding the sufix "_TA" it means that the trend have been assigned by doing technical analysis (TA). All trends in intervals different to daily have to be done by TA.
 - trendletter: this is a letter assigned by the function assign_trends, from A to Z. In the case of sideways trends, the letters are from AA to ZZ.
 - date_start: start time for the optimization
@@ -18,17 +18,9 @@ The structure of optimization results storing is the following, using BTCUSDT Bi
 
 ## Structure of optimization results filename
 
-"RES_filecreationtime_symbolname_trendtype_trendletter_date_start&date_end_interval#
+"RES_filecreationtime_symbolname_trendtype_trendletter_date_start&date_end__intervals#
 
 Note: data format for 'start' and 'end' --> %Y-%m-%d-%H:%M:%S
-
-**/optimization/"symbol_name"/calculations/**
-
-### Structure of file for calculations
-
-"CALC__filecreationtime__symbolname__trendtype__ws__trendletter__date_start_to_date_end__intervalrg__emaslowrg__emafastrg__emasignrg"
-
-This file is used to do all the necessary calculations to extract then the filtered results by trend, interval, period
 
 **/testing/**: this folder is intended to be used for doing any kind of test that does not need to be registered in results files
 
