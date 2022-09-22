@@ -24,7 +24,7 @@ import requests as requests
 import time as time
 
 
-# In[458]:
+# In[1]:
 
 
 class Macd_long_backtester():
@@ -397,8 +397,8 @@ class Macd_long_backtester():
                 results.append(tuple_results)
                 print(f"processed {len(results)} out of a total {len(combinations)}")
             except (BinanceAPIException, ConnectionResetError, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
-                    print('Something went wrong. Error occured at %s. Wait for 1 min.' % (datetime.now().astimezone(timezone.utc)))
-                    time.sleep(60)
+                    print('Something went wrong. Error occured at %s. Wait for 60 min.' % (datetime.now().astimezone(timezone.utc)))
+                    time.sleep(3600)
                     api_key = "Q3Zsx6rO7uy0YntyWjb9CTGxbQAfENBxbPAkeOtksXm2AcLcu1y7IOj1fgPFtutO"
                     api_secret = "LeiOCoJdBuCtfgrt1WfsBweeyC2ZwuogPuDrkXFTioEGoaZYOGkju1GRM3yVqp7v"
                     client = Client(api_key, api_secret)

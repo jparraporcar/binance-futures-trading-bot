@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[117]:
+# In[1]:
 
 
 import ta
@@ -24,10 +24,10 @@ import requests as requests
 import time as time
 
 
-# In[458]:
+# In[2]:
 
 
-class Macd_long_backtester():
+class Macd_long_backtester_1stpkbm():
     
     '''
     Macd class for backtesting strategies
@@ -312,36 +312,44 @@ class Macd_long_backtester():
         self.data_init['multiple_hold_acum'] = np.exp(self.data_init.log_returns_hold.cumsum())
         #initialize again positions and sign_inv for new data
         self.data_init['position'] = 0
-        self.data_init['inv_sign'] = 0
+        self.data_init['peak'] = 0
         #stablish neutral conditions
-        ht_pos = self.data_init.macd_diff.shift(1) > 0
-        ht_plusone_neg = self.data_init.macd_diff < 0
+        cond1 = self.data_init.macd_diff.shift(-1) > 0
+        cond2 = self.data_init.macd_diff > 0
+        cond3 = self.data_init.macd_diff.shift(+1) > 0
+        cond4 = self.data_init.macd_diff > self.data_init.macd_diff.shift(-1)
+        cond5 = self.data_init.macd_diff > self.data_init.macd_diff.shift(+1)
+        cond_all_neutral = cond1&cond2&cond3&cond4&cond5
         #stablish neutral positions
-        self.data_init.loc[ht_pos & ht_plusone_neg, 'inv_sign'] = -1
+        self.data_init.loc[cond_all_neutral, 'peak'] = -1
         #stablish buy conditions
-        ht_neg = self.data_init.macd_diff.shift(1) < 0
-        ht_plusone_pos = self.data_init.macd_diff > 0
+        cond6 = self.data_init.macd_diff.shift(-1) < 0
+        cond7 = self.data_init.macd_diff < 0
+        cond8 = self.data_init.macd_diff.shift(+1) < 0
+        cond9 = self.data_init.macd_diff < self.data_init.macd_diff.shift(-1)
+        cond10 = self.data_init.macd_diff < self.data_init.macd_diff.shift(+1)
+        cond_all_buy = cond6&cond7&cond8&cond9&cond10
         #stablish buy positions
-        self.data_init.loc[ht_neg & ht_plusone_pos, 'inv_sign'] = 1
+        self.data_init.loc[cond_all_buy, 'peak'] = 1
         #create neutral and buy positions algorithm
         for index, data in self.data_init.iterrows():
-            if (data.inv_sign == 1):
+            if (data.peak == 1):
                 self.data_init.loc[index, 'position'] = 1
                 self.data_init_sub_sell = self.data_init.loc[index + timedelta(minutes=1):]
                 for index_sub_sell, data_sub_sell in self.data_init_sub_sell.iterrows():
-                    if (data_sub_sell.inv_sign == 0):
+                    if (data_sub_sell.peak == 0):
                         self.data_init.loc[index_sub_sell, 'position'] = 1
-                    if (data_sub_sell.inv_sign != 0):
+                    if (data_sub_sell.peak != 0):
                         break
-            if (data.inv_sign == 0):
+            if (data.peak == 0):
                 pass
-            if(data.inv_sign == -1):
+            if (data.peak == -1):
                 self.data_init.loc[index, 'position'] = 0
                 self.data_init_sub_buy = self.data_init.loc[index + timedelta(minutes=1):]
                 for index_sub_buy, data_sub_buy in self.data_init_sub_buy.iterrows():
-                    if (data_sub_buy.inv_sign == 0):
+                    if (data_sub_buy.peak == 0):
                         self.data_init.loc[index_sub_buy, 'position'] = 0
-                    if (data_sub_buy.inv_sign != 0):
+                    if (data_sub_buy.peak != 0):
                         break
         #stablish the trading costs and the number of trades done
         self.data_init['trades'] = 0
@@ -397,8 +405,8 @@ class Macd_long_backtester():
                 results.append(tuple_results)
                 print(f"processed {len(results)} out of a total {len(combinations)}")
             except (BinanceAPIException, ConnectionResetError, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
-                    print('Something went wrong. Error occured at %s. Wait for 1 min.' % (datetime.now().astimezone(timezone.utc)))
-                    time.sleep(60)
+                    print('Something went wrong. Error occured at %s. Wait for 60 min.' % (datetime.now().astimezone(timezone.utc)))
+                    time.sleep(3600)
                     api_key = "Q3Zsx6rO7uy0YntyWjb9CTGxbQAfENBxbPAkeOtksXm2AcLcu1y7IOj1fgPFtutO"
                     api_secret = "LeiOCoJdBuCtfgrt1WfsBweeyC2ZwuogPuDrkXFTioEGoaZYOGkju1GRM3yVqp7v"
                     client = Client(api_key, api_secret)
@@ -435,36 +443,4 @@ class Macd_long_backtester():
             df_complete.to_csv(f"{type_trend}.csv", mode='w', index=False, header=True)
         else:
             self.opt_results.to_csv(f"{type_trend}.csv", mode='w', index=False, header=True)
-        
-        
 
-
-# ## Results tested against the result coming from the file '2022Sep3th_BTC_MACD_long_only_CHECK_OK_Working' and it is the same result for the given paramaters: <br>
-# 
-# __1) macd_inst = Macd_long_backtester(symbol='BTCUSDT')__<br>
-# 
-# __2) macd_inst.prepare_data(interval='1d', start='2018-10-29-20:00', end='2022-08-29-20:00')__<br>
-# 
-# __3) macd_inst.assign_trends(window_size=60, plot=True)__<br>
-# 
-# __4) macd_inst.execute_backtest(ema_slow=24, ema_fast=12, ema_signal=9) = (3.2042562870505837, 4.8108773219256085, 4.41872336884791)__<br>
-# 
-# __And now results coming from the mentioned file: <br>
-# '2022Sep3th_BTC_MACD_long_only_CHECK_OK_Working':__ <br>
-# 
-# __multiple_hold = np.exp(btcusdt.log_returns.sum()) <br>
-# multiple_hold <br>
-# 3.2042562870505837__
-# 
-# __multiple_macd_strategy = np.exp(btcusdt.macd_log_returns.sum()) <br>
-# multiple_macd_strategy__ <br>
-# __4.8108773219256085__ <br>
-# 
-# __multiple_macd_strategy_net = np.exp(btcusdt.macd_log_returns_net.sum()) <br>
-# multiple_macd_strategy_net__ <br>
-# __4.41872336884791__ <br>
-# 
-# 
-# 
-# 
-# 
