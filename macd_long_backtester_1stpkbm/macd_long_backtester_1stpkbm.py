@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[29]:
 
 
 import ta
@@ -24,7 +24,7 @@ import requests as requests
 import time as time
 
 
-# In[2]:
+# In[37]:
 
 
 class Macd_long_backtester_1stpkbm():
@@ -357,10 +357,10 @@ class Macd_long_backtester_1stpkbm():
         trade_exec_cond = self.data_init.position.diff().fillna(0).abs() != 0
         self.data_init.loc[trade_exec_cond, 'trades'] = 1
         #calculate strategy returns
-        self.data_init['macd_log_returns'] = self.data_init.log_returns_hold * self.data_init.position.shift(1)
-        self.data_init['macd_log_returns_net'] = self.data_init.macd_log_returns + self.data_init.trades * trading_cost
-        self.data_init['macd_log_returns_acum'] = np.exp(self.data_init.macd_log_returns.cumsum())
-        self.data_init['macd_log_returns_net_acum'] = np.exp(self.data_init.macd_log_returns_net.cumsum())
+        self.data_init['macd_peak_log_returns'] = self.data_init.log_returns_hold * self.data_init.position.shift(1)
+        self.data_init['macd_peak_log_returns_net'] = self.data_init.macd_peak_log_returns + self.data_init.trades * trading_cost
+        self.data_init['macd_peak_log_returns_acum'] = np.exp(self.data_init.macd_peak_log_returns.cumsum())
+        self.data_init['macd_peak_log_returns_net_acum'] = np.exp(self.data_init.macd_peak_log_returns_net.cumsum())
 
         #calculating the function outputs
         multiple_hold = np.exp(self.data_init.log_returns_hold.sum())
@@ -368,18 +368,18 @@ class Macd_long_backtester_1stpkbm():
         ann_log_std_hold = self.data_init.log_returns_hold.std() * np.sqrt(365)
         sharpe_ratio_hold = ann_log_mean_hold / ann_log_std_hold
         
-        multiple_macd_strategy = np.exp(self.data_init.macd_log_returns.sum())
-        ann_log_mean_macd = self.data_init.macd_log_returns.mean() * 365
-        ann_log_std_macd = self.data_init.macd_log_returns.std() * np.sqrt(365)
-        sharpe_ratio_macd = ann_log_mean_macd / ann_log_std_macd
+        multiple_macd_peak_strategy = np.exp(self.data_init.macd_peak_log_returns.sum())
+        ann_log_mean_macd_peak = self.data_init.macd_peak_log_returns.mean() * 365
+        ann_log_std_macd_peak = self.data_init.macd_peak_log_returns.std() * np.sqrt(365)
+        sharpe_ratio_macd_peak = ann_log_mean_macd_peak / ann_log_std_macd_peak
         
-        multiple_macd_strategy_net = np.exp(self.data_init.macd_log_returns_net.sum())
-        ann_log_mean_macd_net = self.data_init.macd_log_returns_net.mean() * 365
-        ann_log_std_macd_net = self.data_init.macd_log_returns_net.std() * np.sqrt(365)
-        sharpe_ratio_macd_net = ann_log_mean_macd_net / ann_log_std_macd_net
-        tuple_return = (multiple_hold, ann_log_mean_hold, ann_log_std_hold, sharpe_ratio_hold, multiple_macd_strategy, ann_log_mean_macd, ann_log_std_macd, sharpe_ratio_macd, multiple_macd_strategy_net, ann_log_mean_macd_net, ann_log_std_macd_net, sharpe_ratio_macd_net)
+        multiple_macd_peak_strategy_net = np.exp(self.data_init.macd_peak_log_returns_net.sum())
+        ann_log_mean_macd_peak_net = self.data_init.macd_peak_log_returns_net.mean() * 365
+        ann_log_std_macd_peak_net = self.data_init.macd_peak_log_returns_net.std() * np.sqrt(365)
+        sharpe_ratio_macd_peak_net = ann_log_mean_macd_peak_net / ann_log_std_macd_peak_net
+        tuple_return = (multiple_hold, ann_log_mean_hold, ann_log_std_hold, sharpe_ratio_hold, multiple_macd_peak_strategy, ann_log_mean_macd_peak, ann_log_std_macd_peak, sharpe_ratio_macd_peak, multiple_macd_peak_strategy_net, ann_log_mean_macd_peak_net, ann_log_std_macd_peak_net, sharpe_ratio_macd_peak_net)
 
-        df_return = pd.DataFrame(data=[list(tuple_return)], columns=['multiple_hold', 'ann_log_mean_hold', 'ann_log_std_hold', 'sharpe_ratio_hold', 'multiple_macd_strategy', 'ann_log_mean_macd', 'ann_log_std_macd', 'sharpe_ratio_macd', 'multiple_macd_strategy_net', 'ann_log_mean_macd_net', 'ann_log_std_macd_net', 'sharpe_ratio_macd_net'])
+        df_return = pd.DataFrame(data=[list(tuple_return)], columns=['multiple_hold', 'ann_log_mean_hold', 'ann_log_std_hold', 'sharpe_ratio_hold', 'multiple_macd_peak_strategy', 'ann_log_mean_macd_peak', 'ann_log_std_macd_peak', 'sharpe_ratio_macd_peak', 'multiple_macd_peak_strategy_net', 'ann_log_mean_macd_peak_net', 'ann_log_std_macd_peak_net', 'sharpe_ratio_macd_peak_net'])
         print(df_return)
         return tuple_return
     
@@ -415,10 +415,10 @@ class Macd_long_backtester_1stpkbm():
                     break
         
         combinations_df = pd.DataFrame(data=combinations, columns=['interval_opt', 'macd_slow_opt', 'macd_fast_opt', 'macd_signal_opt'])
-        many_results_df = pd.DataFrame(data=results, columns = ['multiple_hold', 'ann_log_mean_hold', 'ann_log_std_hold', 'sharpe_ratio_hold', 'multiple_macd_strategy', 'ann_log_mean_macd', 'ann_log_std_macd', 'sharpe_ratio_macd', 'multiple_macd_strategy_net', 'ann_log_mean_macd_net', 'ann_log_std_macd_net', 'sharpe_ratio_macd_net', 'trend_ref', 'start_opt', 'end_opt'])
+        many_results_df = pd.DataFrame(data=results, columns = ['multiple_hold', 'ann_log_mean_hold', 'ann_log_std_hold', 'sharpe_ratio_hold', 'multiple_macd_peak_strategy', 'ann_log_mean_macd_peak', 'ann_log_std_macd_peak', 'sharpe_ratio_macd_peak', 'multiple_macd_peak_strategy_net', 'ann_log_mean_macd_peak_net', 'ann_log_std_macd_peak_net', 'sharpe_ratio_macd_peak_net', 'trend_ref', 'start_opt', 'end_opt'])
         mg=pd.merge(combinations_df,many_results_df, how='inner', left_index=True, right_index=True)
         #Filtering only meaningfull combinations
-        cond1 = mg.multiple_macd_strategy != 1 #not enough data to carry out a single crossover
+        cond1 = mg.multiple_macd_peak_strategy != 1 #not enough data to carry out a single crossover
         cond2 = mg.macd_slow_opt > mg.macd_fast_opt
         mg_filt = mg.loc[cond1&cond2].copy()
         self.opt_results = mg_filt.copy()
@@ -428,14 +428,14 @@ class Macd_long_backtester_1stpkbm():
         cond3 = mg_filt.interval_opt == int_for_max
         mg_desired_interval = mg_filt[cond3].copy()
         
-        cond_max = mg_desired_interval.multiple_macd_strategy == mg_desired_interval.multiple_macd_strategy.max()
-        multiple_macd_strategy_opt_max = mg_desired_interval[cond_max]
+        cond_max = mg_desired_interval.multiple_macd_peak_strategy == mg_desired_interval.multiple_macd_peak_strategy.max()
+        multiple_macd_peak_strategy_opt_max = mg_desired_interval[cond_max]
         
-        cond_net_max = mg_desired_interval.multiple_macd_strategy_net == mg_desired_interval.multiple_macd_strategy_net.max()
-        multiple_macd_strategy_net_opt_max = mg_desired_interval[cond_net_max]
+        cond_net_max = mg_desired_interval.multiple_macd_peak_strategy_net == mg_desired_interval.multiple_macd_peak_strategy_net.max()
+        multiple_macd_peak_strategy_net_opt_max = mg_desired_interval[cond_net_max]
         
-        self.multiple_macd_strategy_max = multiple_macd_strategy_opt_max
-        self.multiple_macd_strategy_net_max = multiple_macd_strategy_net_opt_max
+        self.multiple_macd_peak_strategy_max = multiple_macd_peak_strategy_opt_max
+        self.multiple_macd_peak_strategy_net_max = multiple_macd_peak_strategy_net_opt_max
 
         if os.path.exists(f"{type_trend}.csv"):
             df_imported = pd.read_csv(f"{type_trend}.csv")

@@ -376,9 +376,9 @@ class Macd_long_backtester():
         return tuple_return
     
     def plot_backtest_results(self):
-        
         pass
-    
+        
+        
     def execute_opt(self, start_opt=None, end_opt=None, interval_opt=None, ema_slow_opt=None, ema_fast_opt=None, ema_sign_opt=None, int_for_max=None, type_trend=None, trend_ref=None):
         '''
         REMARK: Introduced time must be in Tokyo time (UTC+9) but the calculations will be in UTC
