@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[117]:
+# In[24]:
 
 
 import ta
@@ -22,13 +22,13 @@ from binance.client import Client
 from binance.exceptions import *
 import requests as requests
 import time as time
+import matplotlib.dates as mdates
 
 
-# In[1]:
+# In[5]:
 
 
 class Macd_long_backtester():
-    
     '''
     Macd class for backtesting strategies
     How to use this class:
@@ -37,12 +37,8 @@ class Macd_long_backtester():
         - start
         - end
         - interval
-        - macd parameters
         
         COLUMNS CREATED
-        - macd_diff
-        - macd_macd
-        - macd_signal
         - log_returns_hold
         - multiple_hold_acum
         - position
@@ -86,21 +82,25 @@ class Macd_long_backtester():
         :param data_sideways: a dataframe with data extracted from self.data but only for the type of trend
         :type data_sideways: str.
         """
+        print('class version 1.1 is being used')
         self.symbol = symbol
         self.data_init = pd.DataFrame()
         self.trend_assigned = None
-        self.interval = None
         self.type_trend = None
         self.trend_ref = None
-        #Read-only paramters below, only informative of the last data prepared
+        #Read-only parameters below, only informative of the last data prepared
+        #Assigned in prepare_data() method.
         self.start = None
         self.end = None
+        self.interval = None
+        self.from_time = None
+        self.to_time = None
+        
         self.ema_slow = None
         self.ema_fast = None
         self.ema_signal = None
         self.opt_results = None
-        self.from_time = None
-        self.to_time = None
+
     
     def __repr__(self):
         return f"Macd_long_backtester(symbol={self.symbol})"
@@ -117,7 +117,7 @@ class Macd_long_backtester():
         :param interval: string among the followings: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]
         :type interval: str.
         '''
-
+        
         self.start = start
         self.end = end
         self.interval = interval
@@ -294,7 +294,7 @@ class Macd_long_backtester():
         pre_from_time_obj = from_time_obj - td
         pre_from_time = int((from_time_obj - td).timestamp()*1000)
         self.data_init_pre = utils.get_history_v2(symbol=self.symbol, interval=self.interval, start=pre_from_time, end=self.to_time)[0]
-        #Assign the MACD parameters to the class to see which para,tershave been used last
+        #Assign the MACD parameters to the class to see which parameters have been used last
         self.ema_slow = ema_slow
         self.ema_fast = ema_fast
         self.ema_signal = ema_signal 
@@ -327,22 +327,18 @@ class Macd_long_backtester():
         for index, data in self.data_init.iterrows():
             if (data.inv_sign == 1):
                 self.data_init.loc[index, 'position'] = 1
-                self.data_init_sub_sell = self.data_init.loc[index + timedelta(minutes=1):]
-                for index_sub_sell, data_sub_sell in self.data_init_sub_sell.iterrows():
-                    if (data_sub_sell.inv_sign == 0):
-                        self.data_init.loc[index_sub_sell, 'position'] = 1
-                    if (data_sub_sell.inv_sign != 0):
+                one_delta_pos = index + (self.data_init.index[1]-self.data_init.index[0])
+                self.data_init_sub_buy = self.data_init.loc[one_delta_pos:]
+                for index_sub_buy, data_sub_buy in self.data_init_sub_buy.iterrows():
+                    if (data_sub_buy.inv_sign == 0):
+                        self.data_init.loc[index_sub_buy, 'position'] = 1
+                    if (data_sub_buy.inv_sign != 0):
                         break
             if (data.inv_sign == 0):
                 pass
             if(data.inv_sign == -1):
                 self.data_init.loc[index, 'position'] = 0
-                self.data_init_sub_buy = self.data_init.loc[index + timedelta(minutes=1):]
-                for index_sub_buy, data_sub_buy in self.data_init_sub_buy.iterrows():
-                    if (data_sub_buy.inv_sign == 0):
-                        self.data_init.loc[index_sub_buy, 'position'] = 0
-                    if (data_sub_buy.inv_sign != 0):
-                        break
+
         #stablish the trading costs and the number of trades done
         self.data_init['trades'] = 0
         trading_cost = np.log(1 - 0.00075) + np.log(1 - 0.0001)
@@ -375,9 +371,68 @@ class Macd_long_backtester():
         print(df_return)
         return tuple_return
     
-    def plot_backtest_results(self):
-        pass
+    def plot_backtest_results(self, start_plot=None, end_plot=None, width_bars=0.1):
+        # from IPython.core.display import display, HTML
+        # display(HTML("<style>.container { width:100% !important; }</style>"))
+        colors=[]
+
+        fig, (close_ax, macd_ax, acum_ax) = plt.subplots(nrows=3, ncols=1, figsize=(30,20), gridspec_kw={'height_ratios': [4,2,4]}, sharex=True)
+
+        close_ax.grid(visible=True, which='major', axis='x', color='grey')
+        macd_ax.grid(visible=True, which='major', axis='x', color='grey')
+        acum_ax.grid(visible=True, which='major', axis='x', color='grey')
+        close_ax.grid(visible=True, which='major', axis='y', color='grey')
+        macd_ax.grid(visible=True, which='major', axis='y', color='grey')
+        acum_ax.grid(visible=True, which='major', axis='y', color='grey')
+        close_ax.grid(visible=True, which='minor', axis='x', color='grey')
+        macd_ax.grid(visible=True, which='minor', axis='x', color='grey')
+        acum_ax.grid(visible=True, which='minor', axis='x', color='grey')        
+
+        close_ax.tick_params(labelrotation=45)
+        macd_ax.tick_params(labelrotation=45)
+        acum_ax.tick_params(labelrotation=45)
+
+        close_ax.margins(0)
+        macd_ax.margins(0)
+        acum_ax.margins(0)
         
+        close_ax.set_ylim(auto=True)
+
+#         days = mdates.DayLocator()
+#         macd_ax.xaxis.set_minor_locator(days)
+#         date_form = mdates.DateFormatter('%Y-%m-%dT%H:%M:%S')
+#         close_ax.xaxis.set_major_formatter(date_form)
+        
+        data_init_ready = self.data_init              
+        if ((start_plot != None) and (end_plot !=None)):
+            cond_start = self.data_init.index >= start_plot
+            cond_end = self.data_init.index <= end_plot
+            data_init_ready = self.data_init[cond_start&cond_end]
+                
+        for index, value in data_init_ready.macd_diff.iteritems():
+            if value > 0:
+                colors.append('g')
+            else:
+                colors.append('r')
+                
+        close_ax.plot(data_init_ready.index, data_init_ready.Close) #plot the data without shifting
+
+        #shift one position the inv_sign only for plotting the signal in the day after is found, without shifting the
+        #Close prices
+        data_init_ready_shift = data_init_ready.copy()
+        data_init_ready_shift['inv_sign'] = data_init_ready.inv_sign.shift(1)
+        buy_pos = data_init_ready_shift.inv_sign == 1              
+        buy_trade = data_init_ready_shift.loc[buy_pos]
+        sell_pos = data_init_ready_shift.inv_sign == -1             
+        sell_trade = data_init_ready_shift.loc[sell_pos]
+        close_ax.scatter(sell_trade.index, sell_trade.Close.loc[sell_trade.index], marker='^', color='r', s=100)
+        close_ax.scatter(buy_trade.index, buy_trade.Close.loc[buy_trade.index], marker='^', color='g', s=100)
+        
+        macd_ax.bar(x= data_init_ready.index, height= data_init_ready.macd_diff, width=width_bars, align='center', color=colors, edgecolor='black')
+
+        acum_ax.plot(data_init_ready.index, data_init_ready.multiple_hold_acum)
+        acum_ax.plot(data_init_ready.index, data_init_ready.macd_log_returns_acum)  
+        acum_ax.legend(['multiple_hold_acum','macd_log_returns_acum'],fontsize=14)
         
     def execute_opt(self, start_opt=None, end_opt=None, interval_opt=None, ema_slow_opt=None, ema_fast_opt=None, ema_sign_opt=None, int_for_max=None, type_trend=None, trend_ref=None):
         '''
@@ -393,12 +448,12 @@ class Macd_long_backtester():
         for comb in combinations:
             try:
                 self.prepare_data(start=start_opt, end=end_opt, interval=comb[0])
-                tuple_results = (*self.execute_backtest(start=self.start, ema_slow=comb[1], ema_fast=comb[2], ema_signal=comb[3]), trend_ref, start_opt, end_opt)
+                tuple_results = (comb[0], comb[1], comb[2], comb[3], *self.execute_backtest(start=self.start, ema_slow=comb[1], ema_fast=comb[2], ema_signal=comb[3]), trend_ref, start_opt, end_opt)
                 results.append(tuple_results)
                 print(f"processed {len(results)} out of a total {len(combinations)}")
             except (BinanceAPIException, ConnectionResetError, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
-                    print('Something went wrong. Error occured at %s. Wait for 60 min.' % (datetime.now().astimezone(timezone.utc)))
-                    time.sleep(3600)
+                    print('Something went wrong. Error occured at %s. Wait for 60s.' % (datetime.now().astimezone(timezone.utc)))
+                    time.sleep(60)
                     api_key = "Q3Zsx6rO7uy0YntyWjb9CTGxbQAfENBxbPAkeOtksXm2AcLcu1y7IOj1fgPFtutO"
                     api_secret = "LeiOCoJdBuCtfgrt1WfsBweeyC2ZwuogPuDrkXFTioEGoaZYOGkju1GRM3yVqp7v"
                     client = Client(api_key, api_secret)
@@ -406,9 +461,7 @@ class Macd_long_backtester():
                     print("error type is 'KeyboardInterrupt'. The data calculated so far has been stored in self.opt_results")
                     break
         
-        combinations_df = pd.DataFrame(data=combinations, columns=['interval_opt', 'macd_slow_opt', 'macd_fast_opt', 'macd_signal_opt'])
-        many_results_df = pd.DataFrame(data=results, columns = ['multiple_hold', 'ann_log_mean_hold', 'ann_log_std_hold', 'sharpe_ratio_hold', 'multiple_macd_strategy', 'ann_log_mean_macd', 'ann_log_std_macd', 'sharpe_ratio_macd', 'multiple_macd_strategy_net', 'ann_log_mean_macd_net', 'ann_log_std_macd_net', 'sharpe_ratio_macd_net', 'trend_ref', 'start_opt', 'end_opt'])
-        mg=pd.merge(combinations_df,many_results_df, how='inner', left_index=True, right_index=True)
+        mg = pd.DataFrame(data=results, columns = ['interval_opt', 'macd_slow_opt', 'macd_fast_opt', 'macd_signal_opt','multiple_hold', 'ann_log_mean_hold', 'ann_log_std_hold', 'sharpe_ratio_hold', 'multiple_macd_strategy', 'ann_log_mean_macd', 'ann_log_std_macd', 'sharpe_ratio_macd', 'multiple_macd_strategy_net', 'ann_log_mean_macd_net', 'ann_log_std_macd_net', 'sharpe_ratio_macd_net', 'trend_ref', 'start_opt', 'end_opt'])
         #Filtering only meaningfull combinations
         cond1 = mg.multiple_macd_strategy != 1 #not enough data to carry out a single crossover
         cond2 = mg.macd_slow_opt > mg.macd_fast_opt
@@ -438,33 +491,3 @@ class Macd_long_backtester():
         
         
 
-
-# ## Results tested against the result coming from the file '2022Sep3th_BTC_MACD_long_only_CHECK_OK_Working' and it is the same result for the given paramaters: <br>
-# 
-# __1) macd_inst = Macd_long_backtester(symbol='BTCUSDT')__<br>
-# 
-# __2) macd_inst.prepare_data(interval='1d', start='2018-10-29-20:00', end='2022-08-29-20:00')__<br>
-# 
-# __3) macd_inst.assign_trends(window_size=60, plot=True)__<br>
-# 
-# __4) macd_inst.execute_backtest(ema_slow=24, ema_fast=12, ema_signal=9) = (3.2042562870505837, 4.8108773219256085, 4.41872336884791)__<br>
-# 
-# __And now results coming from the mentioned file: <br>
-# '2022Sep3th_BTC_MACD_long_only_CHECK_OK_Working':__ <br>
-# 
-# __multiple_hold = np.exp(btcusdt.log_returns.sum()) <br>
-# multiple_hold <br>
-# 3.2042562870505837__
-# 
-# __multiple_macd_strategy = np.exp(btcusdt.macd_log_returns.sum()) <br>
-# multiple_macd_strategy__ <br>
-# __4.8108773219256085__ <br>
-# 
-# __multiple_macd_strategy_net = np.exp(btcusdt.macd_log_returns_net.sum()) <br>
-# multiple_macd_strategy_net__ <br>
-# __4.41872336884791__ <br>
-# 
-# 
-# 
-# 
-# 
