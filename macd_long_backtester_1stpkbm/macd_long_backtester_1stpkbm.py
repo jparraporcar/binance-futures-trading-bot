@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[29]:
+# In[1]:
 
 
 import ta
@@ -24,7 +24,7 @@ import requests as requests
 import time as time
 
 
-# In[37]:
+# In[2]:
 
 
 class Macd_long_backtester_1stpkbm():
@@ -86,6 +86,7 @@ class Macd_long_backtester_1stpkbm():
         :param data_sideways: a dataframe with data extracted from self.data but only for the type of trend
         :type data_sideways: str.
         """
+        print('class version 1.0 is being used')
         self.symbol = symbol
         self.data_init = pd.DataFrame()
         self.trend_assigned = None
@@ -313,51 +314,77 @@ class Macd_long_backtester_1stpkbm():
         #initialize again positions and sign_inv for new data
         self.data_init['position'] = 0
         self.data_init['peak'] = 0
+        
         #stablish neutral conditions
-        cond1 = self.data_init.macd_diff.shift(-1) > 0
-        cond2 = self.data_init.macd_diff > 0
-        cond3 = self.data_init.macd_diff.shift(+1) > 0
-        cond4 = self.data_init.macd_diff > self.data_init.macd_diff.shift(-1)
-        cond5 = self.data_init.macd_diff > self.data_init.macd_diff.shift(+1)
+        cond1 = self.data_init.macd_diff.shift(2) > 0
+        cond2 = self.data_init.macd_diff.shift(1) > 0
+        cond3 = self.data_init.macd_diff > 0
+        cond4 = self.data_init.macd_diff.shift(1) > self.data_init.macd_diff
+        cond5 = self.data_init.macd_diff.shift(1) > self.data_init.macd_diff.shift(2)
         cond_all_neutral = cond1&cond2&cond3&cond4&cond5
         #stablish neutral positions
         self.data_init.loc[cond_all_neutral, 'peak'] = -1
+        
         #stablish buy conditions
-        cond6 = self.data_init.macd_diff.shift(-1) < 0
-        cond7 = self.data_init.macd_diff < 0
-        cond8 = self.data_init.macd_diff.shift(+1) < 0
-        cond9 = self.data_init.macd_diff < self.data_init.macd_diff.shift(-1)
-        cond10 = self.data_init.macd_diff < self.data_init.macd_diff.shift(+1)
+        cond6 = self.data_init.macd_diff.shift(2) < 0
+        cond7 = self.data_init.macd_diff.shift(1) < 0
+        cond8 = self.data_init.macd_diff < 0
+        cond9 = self.data_init.macd_diff.shift(1) < self.data_init.macd_diff
+        cond10 = self.data_init.macd_diff.shift(1) < self.data_init.macd_diff.shift(2)
         cond_all_buy = cond6&cond7&cond8&cond9&cond10
         #stablish buy positions
         self.data_init.loc[cond_all_buy, 'peak'] = 1
         #create neutral and buy positions algorithm
+        buy_peak_repeated= False
+        sell_peak_repeated = False
         for index, data in self.data_init.iterrows():
-            if (data.peak == 1):
-                self.data_init.loc[index, 'position'] = 1
-                self.data_init_sub_sell = self.data_init.loc[index + timedelta(minutes=1):]
-                for index_sub_sell, data_sub_sell in self.data_init_sub_sell.iterrows():
-                    if (data_sub_sell.peak == 0):
-                        self.data_init.loc[index_sub_sell, 'position'] = 1
-                    if (data_sub_sell.peak != 0):
-                        break
+            #neutral conditions
+            if (data.peak == -1):
+                if (sell_peak_repeated == True):
+#                     print('data.peak == -1 && sell_peak_repeated == True branck')
+#                     print(index, self.data_init.loc[index, 'peak'])
+                    self.data_init.loc[index, 'peak'] = 0
+                    buy_peak_repeated = False
+                    continue
+                if (sell_peak_repeated == False):
+#                     print('data.peak == -1 && sell_peak_repeated == False branch')
+#                     print(index, self.data_init.loc[index, 'peak'])
+                    sell_peak_repeated = True
+                    buy_peak_repeated = False #necessary?
             if (data.peak == 0):
                 pass
-            if (data.peak == -1):
-                self.data_init.loc[index, 'position'] = 0
-                self.data_init_sub_buy = self.data_init.loc[index + timedelta(minutes=1):]
-                for index_sub_buy, data_sub_buy in self.data_init_sub_buy.iterrows():
-                    if (data_sub_buy.peak == 0):
-                        self.data_init.loc[index_sub_buy, 'position'] = 0
-                    if (data_sub_buy.peak != 0):
-                        break
+            #buy conditions
+            if (data.peak == 1):
+                if (buy_peak_repeated == True):
+#                     print('data.peak == 1 && buy_peak_repeated == True branch')
+#                     print(index, self.data_init.loc[index, 'peak'])
+                    self.data_init.loc[index, 'peak'] = 0
+                    sell_peak_repeated = False
+                    continue  
+                if (buy_peak_repeated == False):
+#                     print('data.peak == 1 && buy_peak_repeated == False branch')
+#                     print(index, self.data_init.loc[index, 'peak'])
+                    buy_peak_repeated = True
+                    sell_peak_repeated = False
+                    self.data_init.loc[index, 'position'] = 1
+                    one_delta_pos = index + (self.data_init.index[1]-self.data_init.index[0])
+                    self.data_init_sub_buy = self.data_init.loc[one_delta_pos:]
+                    for index_sub_buy, data_sub_buy in self.data_init_sub_buy.iterrows():
+                        if (data_sub_buy.peak == 0):
+                            self.data_init.loc[index_sub_buy, 'position'] = 1
+                         #if a buy signal is repeated, then go the the proper loop branch   
+                        if (data_sub_buy.peak == -1):
+                            break
+                        if (data_sub_buy.peak == 1):
+                            self.data_init.loc[index_sub_buy, 'position'] = 1
+                            self.data_init.loc[index_sub_buy, 'peak'] = 0
         #stablish the trading costs and the number of trades done
         self.data_init['trades'] = 0
         trading_cost = np.log(1 - 0.00075) + np.log(1 - 0.0001)
         trade_exec_cond = self.data_init.position.diff().fillna(0).abs() != 0
         self.data_init.loc[trade_exec_cond, 'trades'] = 1
         #calculate strategy returns
-        self.data_init['macd_peak_log_returns'] = self.data_init.log_returns_hold * self.data_init.position.shift(1)
+        self.data_init['macd_peak_log_returns'] = self.data_init.log_returns_hold * self.data_init.position.shift(2)
         self.data_init['macd_peak_log_returns_net'] = self.data_init.macd_peak_log_returns + self.data_init.trades * trading_cost
         self.data_init['macd_peak_log_returns_acum'] = np.exp(self.data_init.macd_peak_log_returns.cumsum())
         self.data_init['macd_peak_log_returns_net_acum'] = np.exp(self.data_init.macd_peak_log_returns_net.cumsum())
@@ -377,15 +404,76 @@ class Macd_long_backtester_1stpkbm():
         ann_log_mean_macd_peak_net = self.data_init.macd_peak_log_returns_net.mean() * 365
         ann_log_std_macd_peak_net = self.data_init.macd_peak_log_returns_net.std() * np.sqrt(365)
         sharpe_ratio_macd_peak_net = ann_log_mean_macd_peak_net / ann_log_std_macd_peak_net
+        
         tuple_return = (multiple_hold, ann_log_mean_hold, ann_log_std_hold, sharpe_ratio_hold, multiple_macd_peak_strategy, ann_log_mean_macd_peak, ann_log_std_macd_peak, sharpe_ratio_macd_peak, multiple_macd_peak_strategy_net, ann_log_mean_macd_peak_net, ann_log_std_macd_peak_net, sharpe_ratio_macd_peak_net)
 
         df_return = pd.DataFrame(data=[list(tuple_return)], columns=['multiple_hold', 'ann_log_mean_hold', 'ann_log_std_hold', 'sharpe_ratio_hold', 'multiple_macd_peak_strategy', 'ann_log_mean_macd_peak', 'ann_log_std_macd_peak', 'sharpe_ratio_macd_peak', 'multiple_macd_peak_strategy_net', 'ann_log_mean_macd_peak_net', 'ann_log_std_macd_peak_net', 'sharpe_ratio_macd_peak_net'])
         print(df_return)
         return tuple_return
     
-    def plot_backtest_results(self):
+    def plot_backtest_results(self, start_plot=None, end_plot=None, width_bars=0.1):
         
-        pass
+        # from IPython.core.display import display, HTML
+        # display(HTML("<style>.container { width:100% !important; }</style>"))
+        colors=[]
+
+        fig, (close_ax, macd_ax, acum_ax) = plt.subplots(nrows=3, ncols=1, figsize=(30,20), gridspec_kw={'height_ratios': [4,2,4]}, sharex=True)
+
+        close_ax.grid(visible=True, which='major', axis='x', color='grey')
+        macd_ax.grid(visible=True, which='major', axis='x', color='grey')
+        acum_ax.grid(visible=True, which='major', axis='x', color='grey')
+        close_ax.grid(visible=True, which='major', axis='y', color='grey')
+        macd_ax.grid(visible=True, which='major', axis='y', color='grey')
+        acum_ax.grid(visible=True, which='major', axis='y', color='grey')
+        close_ax.grid(visible=True, which='minor', axis='x', color='grey')
+        macd_ax.grid(visible=True, which='minor', axis='x', color='grey')
+        acum_ax.grid(visible=True, which='minor', axis='x', color='grey')        
+
+        close_ax.tick_params(labelrotation=45)
+        macd_ax.tick_params(labelrotation=45)
+        acum_ax.tick_params(labelrotation=45)
+
+        close_ax.margins(0)
+        macd_ax.margins(0)
+        acum_ax.margins(0)
+        
+        close_ax.set_ylim(auto=True)
+
+#         days = mdates.DayLocator()
+#         macd_ax.xaxis.set_minor_locator(days)
+#         date_form = mdates.DateFormatter('%Y-%m-%dT%H:%M:%S')
+#         close_ax.xaxis.set_major_formatter(date_form)
+        
+        data_init_ready = self.data_init              
+        if ((start_plot != None) and (end_plot !=None)):
+            cond_start = self.data_init.index >= start_plot
+            cond_end = self.data_init.index <= end_plot
+            data_init_ready = self.data_init[cond_start&cond_end]
+            
+        for index, value in data_init_ready.macd_diff.iteritems():
+            if value > 0:
+                colors.append('g')
+            else:
+                colors.append('r')   
+                
+        close_ax.plot(data_init_ready.index, data_init_ready.Close) #plot the data without shifting
+
+        #shift one position the inv_sign only for plotting the signal in the day after is found, without shifting the
+        #Close prices
+        data_init_ready_shift = data_init_ready.copy()
+        data_init_ready_shift['peak'] = data_init_ready.peak.shift(1)
+        buy_pos = data_init_ready_shift.peak == 1              
+        buy_trade = data_init_ready_shift.loc[buy_pos]
+        sell_pos = data_init_ready_shift.peak == -1             
+        sell_trade = data_init_ready_shift.loc[sell_pos]
+        close_ax.scatter(sell_trade.index, sell_trade.Close.loc[sell_trade.index], marker='^', color='r', s=100)
+        close_ax.scatter(buy_trade.index, buy_trade.Close.loc[buy_trade.index], marker='^', color='g', s=100)
+        
+        macd_ax.bar(x= data_init_ready.index, height= data_init_ready.macd_diff, width=width_bars, align='center', color=colors, edgecolor='black')
+
+        acum_ax.plot(data_init_ready.index, data_init_ready.multiple_hold_acum)
+        acum_ax.plot(data_init_ready.index, data_init_ready.macd_peak_log_returns_acum)  
+        acum_ax.legend(['multiple_hold_acum','macd_peak_log_returns_acum'],fontsize=14)
     
     def execute_opt(self, start_opt=None, end_opt=None, interval_opt=None, ema_slow_opt=None, ema_fast_opt=None, ema_sign_opt=None, int_for_max=None, type_trend=None, trend_ref=None):
         '''
@@ -401,12 +489,12 @@ class Macd_long_backtester_1stpkbm():
         for comb in combinations:
             try:
                 self.prepare_data(start=start_opt, end=end_opt, interval=comb[0])
-                tuple_results = (*self.execute_backtest(start=self.start, ema_slow=comb[1], ema_fast=comb[2], ema_signal=comb[3]), trend_ref, start_opt, end_opt)
+                tuple_results = (comb[0], comb[1], comb[2], comb[3], *self.execute_backtest(start=self.start, ema_slow=comb[1], ema_fast=comb[2], ema_signal=comb[3]), trend_ref, start_opt, end_opt)
                 results.append(tuple_results)
                 print(f"processed {len(results)} out of a total {len(combinations)}")
             except (BinanceAPIException, ConnectionResetError, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
-                    print('Something went wrong. Error occured at %s. Wait for 60 min.' % (datetime.now().astimezone(timezone.utc)))
-                    time.sleep(3600)
+                    print('Something went wrong. Error occured at %s. Wait for 60s.' % (datetime.now().astimezone(timezone.utc)))
+                    time.sleep(60)
                     api_key = "Q3Zsx6rO7uy0YntyWjb9CTGxbQAfENBxbPAkeOtksXm2AcLcu1y7IOj1fgPFtutO"
                     api_secret = "LeiOCoJdBuCtfgrt1WfsBweeyC2ZwuogPuDrkXFTioEGoaZYOGkju1GRM3yVqp7v"
                     client = Client(api_key, api_secret)
@@ -414,9 +502,7 @@ class Macd_long_backtester_1stpkbm():
                     print("error type is 'KeyboardInterrupt'. The data calculated so far has been stored in self.opt_results")
                     break
         
-        combinations_df = pd.DataFrame(data=combinations, columns=['interval_opt', 'macd_slow_opt', 'macd_fast_opt', 'macd_signal_opt'])
-        many_results_df = pd.DataFrame(data=results, columns = ['multiple_hold', 'ann_log_mean_hold', 'ann_log_std_hold', 'sharpe_ratio_hold', 'multiple_macd_peak_strategy', 'ann_log_mean_macd_peak', 'ann_log_std_macd_peak', 'sharpe_ratio_macd_peak', 'multiple_macd_peak_strategy_net', 'ann_log_mean_macd_peak_net', 'ann_log_std_macd_peak_net', 'sharpe_ratio_macd_peak_net', 'trend_ref', 'start_opt', 'end_opt'])
-        mg=pd.merge(combinations_df,many_results_df, how='inner', left_index=True, right_index=True)
+        mg = pd.DataFrame(data=results, columns = ['interval_opt', 'macd_slow_opt', 'macd_fast_opt', 'macd_signal_opt', 'multiple_hold', 'ann_log_mean_hold', 'ann_log_std_hold', 'sharpe_ratio_hold', 'multiple_macd_peak_strategy', 'ann_log_mean_macd_peak', 'ann_log_std_macd_peak', 'sharpe_ratio_macd_peak', 'multiple_macd_peak_strategy_net', 'ann_log_mean_macd_peak_net', 'ann_log_std_macd_peak_net', 'sharpe_ratio_macd_peak_net', 'trend_ref', 'start_opt', 'end_opt'])
         #Filtering only meaningfull combinations
         cond1 = mg.multiple_macd_peak_strategy != 1 #not enough data to carry out a single crossover
         cond2 = mg.macd_slow_opt > mg.macd_fast_opt
