@@ -12,7 +12,7 @@ from macd_trader import Macd_trader
 # In[ ]:
 
 
-class macd_cross_long_trader(Macd_trader):
+class Macd_cross_long_trader(Macd_trader):
     
     """Class to perform live testing using Binance testnet stream of data
     """
@@ -31,7 +31,7 @@ class macd_cross_long_trader(Macd_trader):
         elif ((ht_previous < 0) and (ht_last > 0)):
             self.position = 1 #position adopted in the latest kandle that is incomplete 99% cases
         else:  
-            self.position = 'no position' #in any other case do nothing and continue
+            self.position = 'np' #in any other case do nothing and continue
         
         li = self.data.index == self.data.index[-1]
         self.data.loc[li, 'position'] = self.position

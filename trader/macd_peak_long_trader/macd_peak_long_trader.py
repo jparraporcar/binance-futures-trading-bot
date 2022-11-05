@@ -12,7 +12,7 @@ from macd_trader import Macd_trader
 # In[35]:
 
 
-class macd_peak_long_trader(Macd_trader):
+class Macd_peak_long_trader(Macd_trader):
     
     """Class to perform live testing using Binance testnet stream of data
     """
@@ -48,7 +48,7 @@ class macd_peak_long_trader(Macd_trader):
             self.positive_peak_found = False
             self.negative_peak_found = True
         else:  
-            self.position = 'no position' #in any other case do nothing and continue
+            self.position = 'np' #in any other case do nothing and continue
             
         li = self.data.index == self.data.index[-1]
         self.data.loc[li, 'position'] = self.position

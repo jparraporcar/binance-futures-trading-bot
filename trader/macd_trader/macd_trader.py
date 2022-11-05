@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[7]:
 
 
 from binance.client import Client
@@ -18,9 +18,10 @@ sys.path.append('/Users/jp/Desktop/Investment/utils')
 import utils
 import matplotlib.pyplot as plt
 import smtplib
+import time
 
 
-# In[1]:
+# In[8]:
 
 
 class Macd_trader():
@@ -53,7 +54,8 @@ class Macd_trader():
         :param assigned_duration_minutes: amount of minutes that the sesion is expected to last, if no problems appear.
         :type assigned_duration_minutes: int.
         ----
-        :param: emergency_price_chg_pct: percentatge threshold (in absolute value) above which the trading sesion stops after a market SELL order
+        :param: emergency_price_chg_pct: percentatge threshold (in absolute value) above which a sell order will be executed for safety purposes.
+        In the case of a price increase the pct is taken as double of the value introduced (ratio 2 win : 1 lose)
         """
         self.units = units
         self.symbol = symbol
@@ -70,7 +72,7 @@ class Macd_trader():
         self.trades = 0 #counter of the number of trades
         self.trade_values = [] #all trading positions consecutive, long/short... or short/long...
         self.trade_values_time = [] #time at which each value in trade_values was appended
-        self.position = None #initially no position is decided, it is pending to analysis recent data of macd to decide
+        self.position = None #initially no position is decided, it is pending to analysis recent data of macd to decide if it is long (1), neutral (0) or no position ('np')
         self.client = None #Binance client just if necessary
         self.trade_start_time_utc = None # time in utc to be defined when the stream of OHLC starts ( this time
         self.twm = None # Initialize ws client
@@ -81,14 +83,18 @@ class Macd_trader():
         self.final_balance_BTC = None #amount of BTC in account after a trade
         self.cum_profits = None #accumulated profits in the trading sesion
         self.close_pair = [] #two consecutive "close" prices to implement the safety returns threshold
-        self.emergency_price_chg = False #flag to activate the signal
+        self.emergency_price_chg_flag = False #flag to activate the signal
         self.emergency_msg = None #message to be sent when emergency price signal activated
         self.pct_price_chg = None #percetatge of change in price monitored every second
         self.conn = None #smtp connection
         self.login_mail() #initialize smtp google account
+        self.increase_counter = 0 #counter to monitor consecutive sharp increases in price per second
+        self.decrease_counter = 0 #counter to monitor consecutive sharp decreases in price per second
+        self.event_time = None # initialize stream kandle event time
 
+        
     def stream_candles(self, msg):
-        event_time = pd.to_datetime(msg["E"], unit = "ms")
+        self.event_time = pd.to_datetime(msg["E"], unit = "ms")
         start_time = pd.to_datetime(msg["k"]["t"], unit = "ms")
         first   = float(msg["k"]["o"])
         high    = float(msg["k"]["h"])
@@ -116,38 +122,135 @@ class Macd_trader():
         self.data.loc[start_time, 'macd_diff'] = macd_diff.iloc[-1]
         self.data.loc[start_time, 'macd_macd'] = macd_macd.iloc[-1]
         self.data.loc[start_time, 'macd_signal'] = macd_signal.iloc[-1]
+                
+        print(".", end = "", flush = True) # just print something to get a feedback (everything OK)
+        print(self.event_time)
+        dt = datetime.utcnow() - self.trade_start_time_utc
         
+        if ((dt) > timedelta(minutes=self.assigned_duration_minutes)):
+            self.stop_ses()
+            
         if (len(self.close_pair) == 0):
             self.close_pair.append(close)
         if (len(self.close_pair) == 1):
             self.close_pair.insert(0,close)
-        if(len(self.close_pair) == 2):
+        if (len(self.close_pair) == 2):
             self.close_pair.pop()
             self.close_pair.insert(0,close)
-            self.pct_price_chg = abs((self.close_pair[1]/self.close_pair[0])-1)
-            #print('testing safety percentatge, value is =', self.pct_price_chg, self.close_pair[0], self.close_pair[1]) 
-            if (self.pct_price_chg > self.emergency_price_chg_pct):
-                self.emergency_price_chg = True
-                self.emergency_msg = 'PRICE CHANGE' 
-                self.stop_ses()
+            self.pct_price_chg = ((self.close_pair[1]/self.close_pair[0])-1)
+            
+            # condition for emergency price increase
+            if (self.pct_price_chg > 2*self.emergency_price_chg_pct):
+                self.emergency_price_chg_flag = True
+                self.decrease_counter = 0
+                self.increase_counter += 1
+                self.emergency_msg = f"PRICE CHANGE - INCREASE - {self.increase_counter}"
+                print(self.emergency_msg)
+                
+                if (self.increase_counter < 3):
+                    pass
+                elif (self.increase_counter == 3):
+                    self.emergency_position_eval_increase()                               
+                    self.emergency_price_chg_flag = False
+                    self.increase_counter = 0
+                    self.end_socket()
+                    time.sleep(45)
+                    self.init_socket()
+                else:
+                    pass
+            # condition for emergency price decrease                    
+            elif (self.pct_price_chg < -1*self.emergency_price_chg_pct):
+                self.emergency_price_chg_flag = True
+                self.increase_counter = 0
+                self.decrease_counter += 1
+                self.emergency_msg = f"PRICE CHANGE - DECREASE - {self.decrease_counter}"
+                print(self.emergency_msg)                
+            
+                if (self.decrease_counter < 3):
+                    pass
+                elif (self.decrease_counter == 3):
+                    self.emergency_position_eval_decrease()
+                    self.emergency_price_chg_flag = False
+                    self.decrease_counter = 0
+                    self.end_socket()
+                    time.sleep(45)
+                    self.init_socket()
+                else:
+                    pass
+            # condition for no emergency price change        
+            else:
+                pass
         
-        print(".", end = "", flush = True) # just print something to get a feedback (everything OK)
-        dt = datetime.utcnow() - self.trade_start_time_utc
-        if ((dt) > timedelta(minutes=self.assigned_duration_minutes)):
-            self.stop_ses()
-        
+        # Every second that the execution arrives here, it means one of these two things:
+        # 1) there has been no emergency price change
+        # 2) there has been an emergency price change but it has been procesed
         if (complete == True):
-            self.tct = start_time #time of the lastest updated/incorporated kandle            
-            self.stablish_positions()
-            self.execute_trades()
+            if (self.emergency_price_chg_flag==False): #continue the normal process if no emergency has been detected or if the flag has been set to false after processing an emergency
+                self.stablish_positions()
+                self.execute_trades()
+            else: #if we enter into the completed kandle but we are in the middle of a emergency price: do nothing
+                  # since it means that we are in the middle of assessing an emergency price change situation 
+                pass
+            
+    def emergency_position_eval_increase(self):
+                
+            if (len(self.trade_values) == 0): #the price increase happens before any trade has been made -> buy
+                self.position = 1
+                self.execute_trades()
+                return
+
+            if (self.position == 0): #current position is neutral -> buy
+                self.position = 1
+                self.execute_trades()
+
+            elif (self.position == 'np' and self.trade_values[-1] > 0): #current position is neutral -> buy  
+                self.position = 1
+                self.execute_trades()   
+
+            elif (self.position == 1): #current position is long -> do nothing
+                pass
+
+            elif (self.position == 'np' and self.trade_values[-1] < 0): #current position is long -> do nothing
+                pass
+
+            else:
+                pass
+            
+    def emergency_position_eval_decrease(self):
+                
+            if (len(self.trade_values) == 0): #the price decrease happens before any trade has been made -> mark as a 'np' and send to execute_trades() logic
+                self.position = 'np'
+                self.execute_trades()
+                return
+
+            if (self.position == 0): #current position is neutral -> do nothing
+                pass
+
+            elif (self.position == 'np' and self.trade_values[-1] > 0): #current position is neutral -> do nothing  
+                pass  
+
+            elif (self.position == 1): #current position is long -> sell
+                self.position = 0
+                self.execute_trades()
+
+            elif (self.position == 'np' and self.trade_values[-1] < 0): #current position is long -> sell
+                self.position = 0
+                self.execute_trades()
+
+            else:
+                pass    
     
     def start_trading(self):
         self.trade_start_time_utc = datetime.utcnow()
-        self.twm = ThreadedWebsocketManager()
-        self.twm.start()
         self.prepare_recent_data()
         self.initial_balance_USDT = round(float(self.client.get_asset_balance(asset='USDT')['free']),3)
         self.initial_balance_BTC = round(float(self.client.get_asset_balance(asset='BTC')['free']),3)
+        self.init_socket()
+        
+    
+    def init_socket(self):
+        self.twm = ThreadedWebsocketManager()
+        self.twm.start() 
         
         try:                  
             self.twm.start_kline_socket(callback = self.stream_candles, symbol = self.symbol, interval = self.interval)
@@ -156,49 +259,37 @@ class Macd_trader():
             print('Something went wrong. Error occured at %s. The sesions will be automatically stopped after GOING NEUTRAL.' % (datetime.now().astimezone(timezone.utc)))
             self.stop_ses()
     
+    def end_socket(self):
+        self.twm.stop()
+    
     def stop_ses(self, save_to_file=True):
 
         self.run_end_time_utc = datetime.utcnow()
         dt = self.run_end_time_utc - self.trade_start_time_utc
         self.run_end_delta = round(dt.seconds/60,0)
         print(f"trading sesion duration = {self.run_end_delta} minutes up to {self.assigned_duration_minutes}")
+        
         if self.position == 0:
-            if (self.emergency_price_chg == True):
-                print(f"EMERGENCY STOP. REASON: {self.emergency_msg}")
-            else:
-                print("STOP")
+            print("STOP")
+
         if self.position == 1:
-            if (self.emergency_price_chg == True):
-                order = self.client.create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units)
-                self.report_trade(order, f"GOING NEUTRAL AND EMERGENCY STOP. REASON: {self.emergency_msg}") 
-                self.position = 0
-            else:
+            order = self.client.create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units)
+            self.report_trade(order, "GOING NEUTRAL AND STOP") 
+            self.position = 0
+            
+        if self.position == 'np':
+            if (len(self.trade_values) == 0):
+                print("STOP BEFORE PLACING ORDERS")            
+            
+            elif (self.trade_values[-1] < 0):
+                self.position = 0 # latest neutral position
+                li = self.data.index == self.data.index[-1]
+                self.data.loc[li, 'position'] = self.position 
                 order = self.client.create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units)
                 self.report_trade(order, "GOING NEUTRAL AND STOP") 
-                self.position = 0
-        if self.position == None:
-            if (len(self.trade_values) == 0):
-                if (self.emergency_price_chg == True):
-                    print(f"EMERGENCY STOP (WITHOUT PLACING ORDERS). REASON: {self.emergency_msg}")
-                else:
-                    print("STOP BEFORE PLACING ORDERS")
-            else:               
-                if (self.trade_values[-1] < 0):
-                    if (self.emergency_price_chg == True):
-                        order = self.client.create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units)
-                        self.report_trade(order, f"GOING NEUTRAL AND EMERGENCY STOP. REASON: {self.emergency_msg}") 
-                        self.position = 0
-                    else:
-                        self.position = 0 # latest neutral position
-                        li = self.data.index == self.data.index[-1]
-                        self.data.loc[li, 'position'] = self.position 
-                        order = self.client.create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units)
-                        self.report_trade(order, "GOING NEUTRAL AND STOP") 
-                else:
-                    if (self.emergency_price_chg == True):
-                        print(f"EMERGENCY STOP. REASON: {self.emergency_msg}")
-                    else:
-                        print("STOP")
+            else:
+                print("STOP")
+
         self.twm.stop()
         
         trades_num_filter = self.data.position.dropna() != None
@@ -227,7 +318,7 @@ class Macd_trader():
             order = self.client.create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units)
             self.report_trade(order, "GOING NEUTRAL")
 
-        if self.position == None:
+        if self.position == 'np':
             pass
 
     def report_trade(self, order, going):
@@ -270,8 +361,8 @@ class Macd_trader():
         msg3 = "{} | Real profit = {} | Accumulate profit = {} ".format(time, real_profit, cum_profits)
         print(msg3)
         msg4 = ""
-        if (self.emergency_price_chg == True):
-            msg4 = "price decreased in 1s in pct: {}, which is more than the imposed pct: {} ".format(self.pct_price_chg, self.emergency_price_chg_pct) 
+        if (self.emergency_price_chg_flag == True):
+            msg4 = "price changed in 1s in pct: {}, which is more/less than the imposed pct: {} (imposed pct x2 if positive) ".format(self.pct_price_chg, self.emergency_price_chg_pct) 
             print(msg4)
         print(100 * "-" + "\n")
         mail_msg = f"Subject: trade executed \n\n {msg1} \n\n {msg2} \n\n {msg3} \n\n {msg4}"
@@ -417,5 +508,5 @@ class Macd_trader():
         self.conn.login('jpxcar6@gmail.com', 'iqdwckxxatmzbcom')
     
     def logout_mail(self):
-        self.conn.quit()        
+        self.conn.quit()       
 
