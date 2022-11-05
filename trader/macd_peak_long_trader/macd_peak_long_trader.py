@@ -18,7 +18,7 @@ class Macd_peak_long_trader(Macd_trader):
     """
     def __init__(self, symbol=None, units='0.0006', interval=None, ema_slow=None, ema_fast=None, ema_signal=None, testnet=None, assigned_duration_minutes=None, emergency_price_chg_pct=None):
         super().__init__(symbol, units, interval, ema_slow, ema_fast, ema_signal, testnet, assigned_duration_minutes, emergency_price_chg_pct)
-        
+        self.bot_name = "macd_peak"
         self.positive_peak_found = False
         self.negative_peak_found = False
 
@@ -56,4 +56,8 @@ class Macd_peak_long_trader(Macd_trader):
     def prepare_recent_data(self):
         super().prepare_recent_data()
         self.stablish_positions()
+        
+    def report_trade(self, order, going):
+        self.bot_name = 'macd_peak'
+        super().report_trade(order, going)        
 

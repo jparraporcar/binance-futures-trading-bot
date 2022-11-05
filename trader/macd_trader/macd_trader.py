@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[7]:
+# In[9]:
 
 
 from binance.client import Client
@@ -19,6 +19,7 @@ import utils
 import matplotlib.pyplot as plt
 import smtplib
 import time
+import json
 
 
 # In[8]:
@@ -28,7 +29,7 @@ class Macd_trader():
     """
     Class to perform live testing using Binance testnet stream of data
     """ 
-    def __init__(self, symbol=None, units='0.0006', interval=None, ema_slow=None, ema_fast=None, ema_signal=None, testnet=None, assigned_duration_minutes=None, emergency_price_chg_pct=None):
+    def __init__(self, symbol=None, units='0.0006', interval=None, ema_slow=None, ema_fast=None, ema_signal=None, testnet=None, assigned_duration_minutes=None, assigned_emergency_price_chg_pct=None):
         """
         :param symbol: ticker in Binance, i.e. "BTCUSDT"
         :type symbol: str.
@@ -54,7 +55,7 @@ class Macd_trader():
         :param assigned_duration_minutes: amount of minutes that the sesion is expected to last, if no problems appear.
         :type assigned_duration_minutes: int.
         ----
-        :param: emergency_price_chg_pct: percentatge threshold (in absolute value) above which a sell order will be executed for safety purposes.
+        :param: assigned_emergency_price_chg_pct: percentatge threshold (in absolute value) above which a sell order will be executed for safety purposes.
         In the case of a price increase the pct is taken as double of the value introduced (ratio 2 win : 1 lose)
         """
         self.units = units
@@ -65,7 +66,7 @@ class Macd_trader():
         self.ema_signal = ema_signal 
         self.testnet = testnet 
         self.assigned_duration_minutes = assigned_duration_minutes
-        self.emergency_price_chg_pct = emergency_price_chg_pct
+        self.assigned_emergency_price_chg_pct = assigned_emergency_price_chg_pct
         self.run_end_time_utc = None #time in UTC when the calculation finished
         self.run_end_delta = None #amount of time that has passed since the beginning of the calculation
         self.data = pd.DataFrame() #initialized dataframe to contain all OHLC data
@@ -76,7 +77,6 @@ class Macd_trader():
         self.client = None #Binance client just if necessary
         self.trade_start_time_utc = None # time in utc to be defined when the stream of OHLC starts ( this time
         self.twm = None # Initialize ws client
-        self.profit = None #Final profit at the end of the trading sesion where the latest position is neutral
         self.initial_balance_USDT = None #amount of USDT in account before a trade
         self.final_balance_USDT = None #amount of USDT in account after a trade
         self.initial_balance_BTC = None #amount of BTC in account before a trade
@@ -90,8 +90,7 @@ class Macd_trader():
         self.login_mail() #initialize smtp google account
         self.increase_counter = 0 #counter to monitor consecutive sharp increases in price per second
         self.decrease_counter = 0 #counter to monitor consecutive sharp decreases in price per second
-        self.event_time = None # initialize stream kandle event time
-
+        self.bot_name = "" #bot name to be defined in each child class
         
     def stream_candles(self, msg):
         self.event_time = pd.to_datetime(msg["E"], unit = "ms")
@@ -124,7 +123,6 @@ class Macd_trader():
         self.data.loc[start_time, 'macd_signal'] = macd_signal.iloc[-1]
                 
         print(".", end = "", flush = True) # just print something to get a feedback (everything OK)
-        print(self.event_time)
         dt = datetime.utcnow() - self.trade_start_time_utc
         
         if ((dt) > timedelta(minutes=self.assigned_duration_minutes)):
@@ -138,9 +136,10 @@ class Macd_trader():
             self.close_pair.pop()
             self.close_pair.insert(0,close)
             self.pct_price_chg = ((self.close_pair[1]/self.close_pair[0])-1)
+            print(self.pct_price_chg)
             
             # condition for emergency price increase
-            if (self.pct_price_chg > 2*self.emergency_price_chg_pct):
+            if (self.pct_price_chg > 2*self.assigned_emergency_price_chg_pct):
                 self.emergency_price_chg_flag = True
                 self.decrease_counter = 0
                 self.increase_counter += 1
@@ -159,7 +158,7 @@ class Macd_trader():
                 else:
                     pass
             # condition for emergency price decrease                    
-            elif (self.pct_price_chg < -1*self.emergency_price_chg_pct):
+            elif (self.pct_price_chg < -1*self.assigned_emergency_price_chg_pct):
                 self.emergency_price_chg_flag = True
                 self.increase_counter = 0
                 self.decrease_counter += 1
@@ -301,7 +300,7 @@ class Macd_trader():
         self.final_balance_BTC = round(float(self.client.get_asset_balance(asset='BTC')['free']),3)
         
         if (save_to_file == True):
-            self.save_to_file()
+            self.save_to_files()
 
     def execute_trades(self):
         cond_last = self.data.index == self.data.index[-1]
@@ -362,10 +361,10 @@ class Macd_trader():
         print(msg3)
         msg4 = ""
         if (self.emergency_price_chg_flag == True):
-            msg4 = "price changed in 1s in pct: {}, which is more/less than the imposed pct: {} (imposed pct x2 if positive) ".format(self.pct_price_chg, self.emergency_price_chg_pct) 
+            msg4 = "price changed in 1s in pct: {}, which is more/less than the imposed pct: {} (imposed pct x2 if positive) ".format(round(self.pct_price_chg, 6), self.assigned_emergency_price_chg_pct) 
             print(msg4)
         print(100 * "-" + "\n")
-        mail_msg = f"Subject: trade executed \n\n {msg1} \n\n {msg2} \n\n {msg3} \n\n {msg4}"
+        mail_msg = f"Subject: trade executed. Bot name: {self.bot_name}. \n\n {msg1} \n\n {msg2} \n\n {msg3} \n\n {msg4}"
         try:
             self.conn.sendmail('jpxcar6@gmail.com', 'jpxcar6@gmail.com', f"{mail_msg}")
         except smtplib.SMTPSenderRefused as e:
@@ -495,11 +494,36 @@ class Macd_trader():
         
         macd_ax.bar(x= data_ready.index, height= data_ready.macd_diff, width=width_bars, align='center', color=colors, edgecolor='black')
     
-    def save_to_file(self):
+    def save_to_files(self):
         file_name = f"macd__symbol_{self.symbol}__interval_{self.interval}__eslow_{self.ema_slow}_efast_{self.ema_fast}_esign_{self.ema_signal}__duration_{self.run_end_delta}min_upto_{self.assigned_duration_minutes}min__profit_{self.cum_profits}dollar__tradesnum_{self.trades}" 
         outfile = open(file_name, 'wb')
         self.data.to_csv(outfile, index = True, header = True, sep = ',', encoding = 'utf-8', date_format ='%Y-%m-%d-%H:%M')
         outfile.close()
+        results = {
+            "units": self.units,
+            "symbol": self.symbol,
+            "interval": self.interval,
+            "ema_slow": self.ema_slow,
+            "ema_fast": self.ema_fast,
+            "ema_signal": self.ema_signal,
+            "testnet": self.testnet,
+            "assigned_duration_minutes": self.assigned_duration_minutes,
+            "assigned_emergency_price_chg_pct": self.assigned_emergency_price_chg_pct,
+            "run_end_time_utc": self.run_end_time_utc.strftime("%Y-%m-%d-%H:%M:%S"),
+            "run_end_delta": self.run_end_delta,
+            "trades": self.trades,
+            "trade_values": self.trade_values,
+            "trade_values_time": self.trade_values_time,
+            "trade_start_time_utc": self.trade_start_time_utc.strftime("%Y-%m-%d-%H:%M:%S"),
+            "profit": self.cum_profits,
+            "emergency_price_chg_flag": self.emergency_price_chg_flag,
+            "emergency_msg": self.emergency_msg,
+            "pct_price_chg": self.pct_price_chg,
+            "bot_name": self.bot_name  
+        }
+        f = open(f"{file_name}.txt", "a")
+        json.dump(results, f)
+        f.close()
     
     def login_mail(self):
         self.conn = smtplib.SMTP('smtp.gmail.com', 587)   
@@ -508,5 +532,5 @@ class Macd_trader():
         self.conn.login('jpxcar6@gmail.com', 'iqdwckxxatmzbcom')
     
     def logout_mail(self):
-        self.conn.quit()       
+        self.conn.quit()
 
