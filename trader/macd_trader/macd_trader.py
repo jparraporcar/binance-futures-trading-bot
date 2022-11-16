@@ -136,7 +136,6 @@ class Macd_trader():
             self.close_pair.pop()
             self.close_pair.insert(0,close)
             self.pct_price_chg = ((self.close_pair[1]/self.close_pair[0])-1)
-            print(self.pct_price_chg)
             
             # condition for emergency price increase
             if (self.pct_price_chg > 2*self.assigned_emergency_price_chg_pct):
@@ -178,7 +177,9 @@ class Macd_trader():
                     pass
             # condition for no emergency price change        
             else:
-                pass
+                self.emergency_price_chg_flag = False
+                self.increase_counter = 0
+                self.decrease_counter = 0
         
         # Every second that the execution arrives here, it means one of these two things:
         # 1) there has been no emergency price change
