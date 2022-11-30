@@ -25,7 +25,7 @@ import time as time
 import matplotlib.dates as mdates
 
 
-# In[213]:
+# In[1]:
 
 
 class Macd_ls_backtester_sma():
@@ -324,6 +324,10 @@ class Macd_ls_backtester_sma():
             m = 24*2*365
         elif (self.interval == '1h'):
             m = 24*365
+        elif (self.interval == '1m'):
+            m = 1440*365
+        elif (self.interval == '5m'):
+            m = 288*365
             
         #calculating the function outputs
         multiple_hold = np.exp(self.data_init.log_returns_hold.sum())
