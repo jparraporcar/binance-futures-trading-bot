@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[18]:
 
 
 from binance.client import Client
 from binance import ThreadedWebsocketManager
 import binance as bn
+from binance.exceptions import BinanceAPIException
+import requests as requests
 import pandas as pd
 import sys
 from datetime import datetime, timedelta
@@ -14,7 +16,7 @@ import ta as ta
 import numpy as np
 import json
 import sys
-sys.path.append('C:\\Users\\Administrator\\Desktop\\utils')
+sys.path.append('/Users/jp/Desktop/Investment/utils')
 import utils
 import matplotlib.pyplot as plt
 import smtplib
@@ -22,7 +24,7 @@ import time
 import json
 
 
-# In[292]:
+# In[19]:
 
 
 class Futures_trader():
@@ -105,12 +107,40 @@ class Futures_trader():
         self.login_mail() #initialize smtp google account
         self.kline_tlast = None #date of latest kandle complete to use in define_strategy()
         self.emg_chg_type = None # 'up' for price increase algo, 'down' for price decrease algo, None for both deactivated, 'both' for both activated
-        
+        self.td = self.calculate_td() # initialize delta t depending on interval chosen
+    
+    def calculate_td(self):
+        td = timedelta()
+        if 'm' in self.interval:
+            num_min = int(self.interval.replace('m',''))
+            td = timedelta(minutes=num_min)
+        if 'h' in self.interval:
+            num_h = int(self.interval.replace('h',''))
+            td = timedelta(hours=num_h)
+        if 'd' in self.interval:
+            num_day = int(self.interval.replace('d',''))
+            td = timedelta(days=num_day)
+        if 'w' in self.interval:
+            num_week = int(self.interval.replace('w',''))
+            td = timedelta(weeks=num_week)
+        if 'M' in self.interval:
+            num_week_m = int(self.interval.replace('M',''))
+            td = timedelta(weeks=4*num_week)
+        return td 
+
     def start_trading(self):
         #self.client.futures_change_margin_type(symbol = "BTCUSDT", marginType = "CROSSED")
         self.trade_start_time_utc = datetime.utcnow()
         self.prepare_recent_data()
-        self.client.futures_change_leverage(symbol = "BTCUSDT", leverage = self.leverage) #initialize leverage        
+        self.stablish_initial_position()
+        self.calculate_returns()
+        
+        try:                  
+            self.client.futures_change_leverage(symbol = "BTCUSDT", leverage = self.leverage) #initialize leverage        
+        except (BinanceAPIException, ConnectionResetError, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
+            client = utils.remake_client(testnet = self.testnet)
+            self.client.futures_change_leverage(symbol = "BTCUSDT", leverage = self.leverage) #initialize leverage        
+            
         self.init_socket()
         
     def init_socket(self):
@@ -126,7 +156,8 @@ class Futures_trader():
     def stream_candles(self, msg):
         event_time = pd.to_datetime(msg["E"], unit = "ms")
         start_time = pd.to_datetime(msg["k"]["t"], unit = "ms")
-        self.kline_tlast = start_time #latest kandle date, complete or incomplete
+        self.klast = start_time #latest kandle date, complete or incomplete
+        self.kprev = start_time - self.td 
         first   = float(msg["k"]["o"])
         high    = float(msg["k"]["h"])
         low     = float(msg["k"]["l"])
@@ -161,8 +192,9 @@ class Futures_trader():
         self.data.loc[start_time, 'sl_flag_long'] = False 
         #initialize emergency position
         self.data.loc[start_time, 'emg_pos'] = False
-                
-        print(".", end = "", flush = True) # just print something to get a feedback (everything OK)
+        
+        print(f"event_time = {event_time}, start_time = {start_time}, complete = {complete}, sma_fast_ps = {sma_fast_ps.iloc[-1]}, sma_slow_ps = {sma_slow_ps.iloc[-1]}")
+        #print(".", end = "", flush = True) # just print something to get a feedback (everything OK)        
         
         dt = datetime.utcnow() - self.trade_start_time_utc
         if ((dt) > timedelta(minutes=self.assigned_duration_minutes)):
@@ -244,44 +276,7 @@ class Futures_trader():
                         self.increase_counter = 0
                     self.decrease_counter = 0  
             else:
-                raise Exception(f"len(self.close_pair)={len(self.close_pair)} --- Unexpected value")
-    
-    def calculate_returns(self):
-        #stablish the trading costs and the number of trades done
-        self.data['trades'] = 0
-        trading_cost_fees = 0.0004
-        trading_cost_others = 0.00001
-        trading_cost = np.log(1 - trading_cost_fees) + np.log(1 - trading_cost_others)
-        trade_exec_cond = self.data.position.diff().fillna(0).abs() != 0
-        self.data.loc[trade_exec_cond, 'trades'] = 1
-        total_trades = self.data.trades[self.data.trades == 1].sum()
-        #calculate strategy returns
-        self.data['log_returns_hold'] = np.log(self.data.Close.div(self.data.Close.shift(1)))
-        self.data['multiple_hold_acum'] = np.exp(self.data.log_returns_hold.cumsum())
-        self.data['macd_log_returns'] = self.data.log_returns_hold * self.data.position.shift(1)
-        self.data['macd_log_returns_net'] = self.data.macd_log_returns + self.data.trades * trading_cost
-        self.data['macd_multiple_acum'] = np.exp(self.data.macd_log_returns.cumsum())
-        self.data['macd_multiple_net_acum'] = np.exp(self.data.macd_log_returns_net.cumsum())
-        #calculating profitable trades with trading costs
-        cond_profit_net1 = self.data.trades == 1
-        cond_profit_net2 = ((self.data.Close.div(self.data.Close.shift(-1)) - 1) + np.log(1 - 0.0004) + np.log(1 - 0.0001))  > 0
-        success_trades_net = self.data[cond_profit_net1&cond_profit_net2].trades.sum()
-        success_trades_net_pct = round((success_trades_net / total_trades)*100,1)
-        #calculating failure trades with trading costs
-        cond_failure_net1 = self.data.trades == 1
-        cond_failure_net2 = ((self.data.Close.div(self.data.Close.shift(-1)) - 1) + np.log(1 - 0.00075) + np.log(1 - 0.0001))  < 0
-        failure_trades_net = self.data[cond_failure_net1&cond_failure_net2].trades.sum()
-        failure_trades_net_pct = round((failure_trades_net / total_trades)*100, 1)
-        # Adds/Labels Trading Sessions and their compound returns.
-        self.data["ses"] = np.sign(self.data.trades).cumsum().shift().fillna(0)
-        self.data["macd_simplecret_net_ses"] = self.data.groupby("ses").macd_log_returns_net.cumsum().apply(np.exp) - 1        
-        self.data["macd_simple_ret"] = np.exp(self.data.macd_log_returns_net) - 1
-        self.data["eff_lev"] = self.leverage * (1 + self.data.macd_simplecret_net_ses) / (1 + self.data.macd_simplecret_net_ses * self.leverage)
-        self.data.eff_lev.fillna(self.leverage, inplace = True)
-        levered_returns = self.data.eff_lev.shift() * self.data.macd_simple_ret
-        levered_returns = np.where(levered_returns < -1, -1, levered_returns)
-        self.data["macd_simple_ret_net_lev"] = levered_returns
-        self.data["macd_simple_ret_net_lev_acum"] = self.data.macd_simple_ret_net_lev.add(1).cumprod()        
+                raise Exception(f"len(self.close_pair)={len(self.close_pair)} --- Unexpected value")     
         
     def prepare_recent_data(self):
         '''
@@ -303,7 +298,7 @@ class Futures_trader():
             extra_periods = ema_diff * 2
         else:
             extra_periods = self.sma_slow * 2
-        
+            
         td = timedelta()
         if 'm' in self.interval:
             num_min = int(self.interval.replace('m',''))
@@ -351,8 +346,6 @@ class Futures_trader():
             self.data['tp_flag_long'] = False
         else: 
             pass
-        self.stablish_initial_position()
-        self.calculate_returns()
         self.data["Complete"] = [True for row in range(len(self.data)-1)] + [False]
         #decide position to be given to the latest recent data kandle (not completed in 99% of cases and that is 
         #going to be updated by the stream of data, so actually, position given to the latest kandle at this point
@@ -491,258 +484,289 @@ class Futures_trader():
                         self.data.loc[index_sub_sell, 'position'] = -1 
             else: 
                 pass
-            
+
         self.kprev = self.data.index[-2]
+    
+    def calculate_returns(self):
+        #stablish the trading costs and the number of trades done
+        self.data['trades'] = 0
+        trading_cost_fees = 0.0004
+        trading_cost_others = 0.00001
+        trading_cost = np.log(1 - trading_cost_fees) + np.log(1 - trading_cost_others)
+        trade_exec_cond = self.data.position.diff().fillna(0).abs() != 0
+        self.data.loc[trade_exec_cond, 'trades'] = 1
+        total_trades = self.data.trades[self.data.trades == 1].sum()
+        #calculate strategy returns
+        self.data['log_returns_hold'] = np.log(self.data.Close.div(self.data.Close.shift(1)))
+        self.data['multiple_hold_acum'] = np.exp(self.data.log_returns_hold.cumsum())
+        self.data['macd_log_returns'] = self.data.log_returns_hold * self.data.position.shift(1)
+        self.data['macd_log_returns_net'] = self.data.macd_log_returns + self.data.trades * trading_cost
+        self.data['macd_multiple_acum'] = np.exp(self.data.macd_log_returns.cumsum())
+        self.data['macd_multiple_net_acum'] = np.exp(self.data.macd_log_returns_net.cumsum())
+        #calculating profitable trades with trading costs
+        cond_profit_net1 = self.data.trades == 1
+        cond_profit_net2 = ((self.data.Close.div(self.data.Close.shift(-1)) - 1) + np.log(1 - 0.0004) + np.log(1 - 0.0001))  > 0
+        success_trades_net = self.data[cond_profit_net1&cond_profit_net2].trades.sum()
+        success_trades_net_pct = round((success_trades_net / total_trades)*100,1)
+        #calculating failure trades with trading costs
+        cond_failure_net1 = self.data.trades == 1
+        cond_failure_net2 = ((self.data.Close.div(self.data.Close.shift(-1)) - 1) + np.log(1 - 0.00075) + np.log(1 - 0.0001))  < 0
+        failure_trades_net = self.data[cond_failure_net1&cond_failure_net2].trades.sum()
+        failure_trades_net_pct = round((failure_trades_net / total_trades)*100, 1)
+        # Adds/Labels Trading Sessions and their compound returns.
+        self.data["ses"] = np.sign(self.data.trades).cumsum().shift().fillna(0)
+        self.data["macd_simplecret_net_ses"] = self.data.groupby("ses").macd_log_returns_net.cumsum().apply(np.exp) - 1        
+        self.data["macd_simple_ret"] = np.exp(self.data.macd_log_returns_net) - 1
+        self.data["eff_lev"] = self.leverage * (1 + self.data.macd_simplecret_net_ses) / (1 + self.data.macd_simplecret_net_ses * self.leverage)
+        self.data.eff_lev.fillna(self.leverage, inplace = True)
+        levered_returns = self.data.eff_lev.shift() * self.data.macd_simple_ret
+        levered_returns = np.where(levered_returns < -1, -1, levered_returns)
+        self.data["macd_simple_ret_net_lev"] = levered_returns
+        self.data["macd_simple_ret_net_lev_acum"] = self.data.macd_simple_ret_net_lev.add(1).cumprod()   
+               
+    def run_sltp_check(self, data=None):
         
-    def run_sltp_check(self, data_upd=None):
+        klast = self.klast
+        kprev = self.kprev         
+        tp_flag_short = self.data.Close.loc[klast] <= (self.data.Close.loc[kprev] * (1 - self.tp)) # condition for stop loss in short position ### ERROR HERE WHILE STREAMING
+        sl_flag_short = self.data.Close.loc[klast] > (self.data.Close.loc[kprev] * (1 + self.sl)) # condition for take profit in short position       
+        tp_flag_long = self.data.Close.loc[klast] >= (self.data.Close.loc[kprev] * (1 + self.tp)) # condition for stop loss in long position
+        sl_flag_long = self.data.Close.loc[klast] < (self.data.Close.loc[kprev] * (1 - self.sl)) # condition for take profit in long position          
         
-        data_upd = self.data.copy()
-        td = timedelta()
-        if 'm' in self.interval:
-            num_min = int(self.interval.replace('m',''))
-            td = timedelta(minutes=num_min)
-        if 'h' in self.interval:
-            num_h = int(self.interval.replace('h',''))
-            td = timedelta(hours=num_h)
-        if 'd' in self.interval:
-            num_day = int(self.interval.replace('d',''))
-            td = timedelta(days=num_day)
-        if 'w' in self.interval:
-            num_week = int(self.interval.replace('w',''))
-            td = timedelta(weeks=num_week)
-        if 'M' in self.interval:
-            num_week_m = int(self.interval.replace('M',''))
-            td = timedelta(weeks=4*num_week)
-        
-        klast = self.kline_tlast
-        kprev = self.kline_tlast - td         
-        tp_flag_short = data_upd.Close.loc[klast] <= (data_upd.Close.loc[kprev] * (1 - self.tp)) # condition for stop loss in short position ### ERROR HERE WHILE STREAMING
-        sl_flag_short = data_upd.Close.loc[klast] > (data_upd.Close.loc[kprev] * (1 + self.sl)) # condition for take profit in short position       
-        tp_flag_long = data_upd.Close.loc[klast] >= (data_upd.Close.loc[kprev] * (1 + self.tp)) # condition for stop loss in long position
-        sl_flag_long = data_upd.Close.loc[klast] < (data_upd.Close.loc[kprev] * (1 - self.sl)) # condition for take profit in long position          
-        
-        if (data_upd.position.loc[kprev] == -1):
+        if (self.data.position.loc[kprev] == -1):
             if (tp_flag_short):
-                data_upd.loc[klast, 'tp_flag_short'] = True               
-                data_upd.loc[klast, 'position'] = 0
-                self.calculate_returns()
+                self.data.loc[klast, 'tp_flag_short'] = True               
+                self.data.loc[klast, 'position'] = 0
                 return True
             elif sl_flag_short:
-                data_upd.loc[klast, 'sl_flag_short'] = True                 
-                data_upd.loc[klast, 'position'] = 0
-                self.calculate_returns()
+                self.data.loc[klast, 'sl_flag_short'] = True                 
+                self.data.loc[klast, 'position'] = 0
                 return True
             else:
                  pass
              
-        elif (data_upd.position.loc[kprev] == 1):
+        elif (self.data.position.loc[kprev] == 1):
             if (tp_flag_long):
-                data_upd.loc[klast, 'tp_flag_long'] = True           
-                data_upd.loc[klast, 'position'] = 0
-                self.calculate_returns()
+                self.data.loc[klast, 'tp_flag_long'] = True           
+                self.data.loc[klast, 'position'] = 0
                 return True
             elif sl_flag_long:
-                data_upd.loc[klast, 'sl_flag_long'] = True                 
-                data_upd.loc[klast, 'position'] = 0
-                self.calculate_returns()
+                self.data.loc[klast, 'sl_flag_long'] = True                 
+                self.data.loc[klast, 'position'] = 0
                 return True
             else:
                 pass
                 
-        elif (data_upd.position.loc[kprev] == 0):
+        elif (self.data.position.loc[kprev] == 0):
             pass
         
         else:
-            raise Exception(f"(data_upd.position.loc[kprev] = {data_upd.position.loc[kprev]}) --- Unexpected value")
-                
+            raise Exception(f"(self.data.position.loc[kprev] = {self.data.position.loc[kprev]}) --- Unexpected value")
+        
+        self.data = self.data.copy()
         return False
     
     def update_position(self):
-        data_upd = self.data.copy()
-        
-        td = timedelta()
-        if 'm' in self.interval:
-            num_min = int(self.interval.replace('m',''))
-            td = timedelta(minutes=num_min)
-        if 'h' in self.interval:
-            num_h = int(self.interval.replace('h',''))
-            td = timedelta(hours=num_h)
-        if 'd' in self.interval:
-            num_day = int(self.interval.replace('d',''))
-            td = timedelta(days=num_day)
-        if 'w' in self.interval:
-            num_week = int(self.interval.replace('w',''))
-            td = timedelta(weeks=num_week)
-        if 'M' in self.interval:
-            num_week_m = int(self.interval.replace('M',''))
-            td = timedelta(weeks=4*num_week)
-        
-        klast = self.kline_tlast
-        kprev = self.kline_tlast - td 
-        self.kprev = kprev # to use in execute_trades() to assess long/short continuity or going out of a neutral position
-        print(f"klast = self.kline_tlast /// klast = {self.kline_tlast}")
-        print(f"kprev = (self.kline_tlast - td) /// kprev = {self.kline_tlast - td}")
-        
-        # ASSESSING STOP LOSS OR TAKE PROFIT TAKE PRECENDENCE, AND IF A CONDITION IS MET THE FUNCTION RETURNS
-        
-        if (self.sl != None and self.tp != None):
-            sltp_is_found = self.run_sltp_check(data_upd=data_upd)
-            if (sltp_is_found):
-                return
-            else:
-                pass
-
+        klast = self.klast
+        kprev = self.kprev   
+                
         # --------------------- MACD CROSS SIGNAL + SMA CONFIRMATION ---------------------
         
         #macd cross long
-        ht_macd_diff_neg = data_upd.macd_diff.loc[kprev] < 0
-        ht_macd_diff_plusone_pos = data_upd.macd_diff.loc[klast] > 0        
+        ht_macd_diff_neg = self.data.macd_diff.loc[kprev] < 0
+        ht_macd_diff_plusone_pos = self.data.macd_diff.loc[klast] > 0        
         #macd cross short
-        ht_macd_diff_pos = data_upd.macd_diff.loc[kprev] > 0
-        ht_macd_diff_plusone_neg = data_upd.macd_diff.loc[klast] < 0 
+        ht_macd_diff_pos = self.data.macd_diff.loc[kprev] > 0
+        ht_macd_diff_plusone_neg = self.data.macd_diff.loc[klast] < 0 
     
         if (ht_macd_diff_neg and ht_macd_diff_plusone_pos):
-            data_upd.loc[klast, 'macd_inv_sign'] = 1
+            self.data.loc[klast, 'macd_inv_sign'] = 1
         elif (ht_macd_diff_pos and ht_macd_diff_plusone_neg):
-            data_upd.loc[klast, 'macd_inv_sign'] = -1
+            self.data.loc[klast, 'macd_inv_sign'] = -1
         else:
-            data_upd.loc[klast, 'macd_inv_sign'] = 0
+            self.data.loc[klast, 'macd_inv_sign'] = 0
         
         #sma long confirmation
-        sma_conf_long = data_upd.sma_fast_ps.loc[klast] > data_upd.sma_slow_ps.loc[klast]
+        sma_conf_long = self.data.sma_fast_ps.loc[klast] > self.data.sma_slow_ps.loc[klast]
         #sma short confirmation
-        sma_conf_short = data_upd.sma_fast_ps.loc[klast] < data_upd.sma_slow_ps.loc[klast]
+        sma_conf_short = self.data.sma_fast_ps.loc[klast] < self.data.sma_slow_ps.loc[klast]
         if sma_conf_long:
-            data_upd.loc[klast, 'sma_conf'] = 1
+            self.data.loc[klast, 'sma_conf'] = 1
         elif sma_conf_short:
-            data_upd.loc[klast, 'sma_conf'] = -1
+            self.data.loc[klast, 'sma_conf'] = -1
         else:
-            data_upd.loc[klast, 'sma_conf'] = 0
+            self.data.loc[klast, 'sma_conf'] = 0
         
         # ---------------------------------------------------------------------------------
         
         # --------------------- SMA CROSS SIGNAL + MACD_DIFF CONFIRMATION -----------------
 
         #sma cross long
-        ht_sma_neg = data_upd.sma_fast_ps.loc[kprev] < data_upd.sma_slow_ps.loc[kprev]
-        ht_sma_plusone_pos = data_upd.sma_fast_ps.loc[klast] > data_upd.sma_slow_ps.loc[klast]        
+        ht_sma_neg = self.data.sma_fast_ps.loc[kprev] < self.data.sma_slow_ps.loc[kprev]
+        ht_sma_plusone_pos = self.data.sma_fast_ps.loc[klast] > self.data.sma_slow_ps.loc[klast]        
         #sma cross short
-        ht_sma_pos = data_upd.sma_fast_ps.loc[kprev] > data_upd.sma_slow_ps.loc[kprev]
-        ht_sma_plusone_neg = data_upd.sma_fast_ps.loc[klast] < data_upd.sma_slow_ps.loc[klast]
+        ht_sma_pos = self.data.sma_fast_ps.loc[kprev] > self.data.sma_slow_ps.loc[kprev]
+        ht_sma_plusone_neg = self.data.sma_fast_ps.loc[klast] < self.data.sma_slow_ps.loc[klast]
                                                                                         
         if (ht_sma_neg and ht_sma_plusone_pos):
-            data_upd.loc[klast, 'sma_inv_sign'] = 1
+            self.data.loc[klast, 'sma_inv_sign'] = 1
         elif (ht_sma_pos and ht_sma_plusone_neg):
-            data_upd.loc[klast, 'sma_inv_sign'] = -1
+            self.data.loc[klast, 'sma_inv_sign'] = -1
         else:
-            data_upd.loc[klast, 'sma_inv_sign'] = 0
+            self.data.loc[klast, 'sma_inv_sign'] = 0
                                                                                     
 
         #macd_diff short confirmation
-        macd_diff_conf_short = data_upd.loc[klast, 'macd_diff'] < 0
+        macd_diff_conf_short = self.data.loc[klast, 'macd_diff'] < 0
         #macd_diff long confirmation
-        macd_diff_conf_long = data_upd.loc[klast, 'macd_diff'] > 0
+        macd_diff_conf_long = self.data.loc[klast, 'macd_diff'] > 0
                                                                                         
         if macd_diff_conf_long:
-            data_upd.loc[klast, 'macd_diff_conf'] = 1
+            self.data.loc[klast, 'macd_diff_conf'] = 1
         elif macd_diff_conf_short:
-            data_upd.loc[klast, 'macd_diff_conf'] = -1
+            self.data.loc[klast, 'macd_diff_conf'] = -1
         else:
-            data_upd.loc[klast, 'macd_diff_conf'] = 0
+            self.data.loc[klast, 'macd_diff_conf'] = 0
         
         # -------------------------------- POSITION DEFINITION -----------------------------
         
-        if ((data_upd.loc[klast, 'macd_inv_sign'] == 1 and data_upd.loc[klast, 'sma_inv_sign'] == 1) or (data_upd.loc[klast, 'macd_inv_sign'] == 1 and data_upd.loc[klast, 'sma_conf'] == 1)):
-            data_upd.loc[klast, 'position'] = 1
+        if ((self.data.loc[klast, 'macd_inv_sign'] == 1 and self.data.loc[klast, 'sma_inv_sign'] == 1) or (self.data.loc[klast, 'macd_inv_sign'] == 1 and self.data.loc[klast, 'sma_conf'] == 1)):
+            self.data.loc[klast, 'position'] = 1
         
-        elif ((data_upd.loc[klast, 'macd_inv_sign'] == -1 and data_upd.loc[klast, 'sma_inv_sign'] == -1) or (data_upd.loc[klast, 'macd_inv_sign'] == -1 and data_upd.loc[klast, 'sma_conf'] == -1)):
-            data_upd.loc[klast, 'position'] = -1
+        elif ((self.data.loc[klast, 'macd_inv_sign'] == -1 and self.data.loc[klast, 'sma_inv_sign'] == -1) or (self.data.loc[klast, 'macd_inv_sign'] == -1 and self.data.loc[klast, 'sma_conf'] == -1)):
+            self.data.loc[klast, 'position'] = -1
         
-        elif ((data_upd.loc[klast, 'sma_inv_sign'] == 1 and data_upd.loc[klast, 'macd_inv_sign'] == 1) or (data_upd.loc[klast, 'sma_inv_sign'] == 1 and data_upd.loc[klast, 'macd_diff_conf'] == 1)):
-            data_upd.loc[klast, 'position'] = 1
+        elif ((self.data.loc[klast, 'sma_inv_sign'] == 1 and self.data.loc[klast, 'macd_inv_sign'] == 1) or (self.data.loc[klast, 'sma_inv_sign'] == 1 and self.data.loc[klast, 'macd_diff_conf'] == 1)):
+            self.data.loc[klast, 'position'] = 1
         
-        elif ((data_upd.loc[klast, 'sma_inv_sign'] == -1 and data_upd.loc[klast, 'macd_inv_sign'] == -1) or (data_upd.loc[klast, 'sma_inv_sign'] == -1 and data_upd.loc[klast, 'macd_diff_conf'] == -1)):
-            data_upd.loc[klast, 'position'] = -1
+        elif ((self.data.loc[klast, 'sma_inv_sign'] == -1 and self.data.loc[klast, 'macd_inv_sign'] == -1) or (self.data.loc[klast, 'sma_inv_sign'] == -1 and self.data.loc[klast, 'macd_diff_conf'] == -1)):
+            self.data.loc[klast, 'position'] = -1
         
         else:
-            data_upd.loc[klast, 'position'] = 0
-            
-        self.data = data_upd.copy()
+            self.data.loc[klast, 'position'] = 0
+        
+        # if stltp signal, overwrite the position accordingly
+        self.calculate_returns()    
+        
+        if (self.sl != None and self.tp != None):
+            sltp_is_found = self.run_sltp_check(data=self.data)
+            if (sltp_is_found):
+                return
+            else:
+                pass        
+        
         
     def assess_order_status(self, order=None, GOING=None):
         print('executing assess_order_status')
-        order_details = self.client.futures_get_order(symbol = "BTCUSDT", orderId = order["orderId"]) # check order status
+
+        try:                  
+            order_details = self.client.futures_get_order(symbol = "BTCUSDT", orderId = order["orderId"]) # check order status
+        except (BinanceAPIException, ConnectionResetError, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
+            client = utils.remake_client(testnet = self.testnet)
+            order_details = self.client.futures_get_order(symbol = "BTCUSDT", orderId = order["orderId"]) # check order status
+        
+        time.sleep(2)
         if (order_details['status'] == 'FILLED'):
             print('FILLED AND REPORTING...')
             self.report_trade(order, GOING) 
         else:
-            print(f"order={order}", 'NOT FILLED AND NO NEED TO REPORT')    
+            print(f"order={order}", 'NOT FILLED AND NO NEED TO REPORT')        
     
-    def execute_trades(self):
-        td = timedelta()
-        if 'm' in self.interval:
-            num_min = int(self.interval.replace('m',''))
-            td = timedelta(minutes=num_min)
-        if 'h' in self.interval:
-            num_h = int(self.interval.replace('h',''))
-            td = timedelta(hours=num_h)
-        if 'd' in self.interval:
-            num_day = int(self.interval.replace('d',''))
-            td = timedelta(days=num_day)
-        if 'w' in self.interval:
-            num_week = int(self.interval.replace('w',''))
-            td = timedelta(weeks=num_week)
-        if 'M' in self.interval:
-            num_week_m = int(self.interval.replace('M',''))
-            td = timedelta(weeks=4*num_week)
+    def execute_trades(self): 
+        klast = self.klast
+        kprev = self.kprev
         
-        kprev = self.kline_tlast - td #necessary to update kprev not only in update_position since when executing stop_ses() update_position is bypassed
-        self.kprev = kprev # to use in execute_trades() to assess long/short continuity or going out of a neutral position        
-        klast = self.kline_tlast         
-        
-        if self.data.loc[klast, 'position'] == 1: # if position is long -> go/stay long
-            if self.data.loc[kprev, 'position'] == 0:
-                order = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
-                self.assess_order_status(order, 'GOING LONG')
-            elif self.data.loc[kprev, 'position'] == -1:
-                if (self.orders == 0): # if it is first order after prepare_recent_data() it is not necessary to go neutral first.
+        try:      
+            if self.data.loc[klast, 'position'] == 1: # if position is long -> go/stay long
+                if self.data.loc[kprev, 'position'] == 0:
                     order = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
                     self.assess_order_status(order, 'GOING LONG')
-                elif (self.orders > 0):
-                    order1 = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
-                    self.assess_order_status(order1, 'GOING NEUTRAL 1')
-                    order2 = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
-                    self.assess_order_status(order2, 'GOING LONG 1' )
-                elif self.data.loc[kprev, 'position'] == 1:
+                elif self.data.loc[kprev, 'position'] == -1:
+                    if (self.orders == 0): # if it is first order after prepare_recent_data() it is not necessary to go neutral first.
+                        order = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order, 'GOING LONG')
+                    elif (self.orders > 0):
+                        order1 = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order1, 'GOING NEUTRAL 1')
+                        order2 = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order2, 'GOING LONG 1' )
+                    elif self.data.loc[kprev, 'position'] == 1:
+                        pass
+
+            elif self.data.loc[klast, 'position'] == 0: # if position is neutral -> go/stay neutral
+                if (self.orders == 0): #no need to do anything if there is no order. This means is false neutral flag coming from prepare_recent_data() first iteration. Sesion has been stopped before any orders where placed.
+                    return
+                if self.data.loc[kprev, 'position'] == 1: ####### ERROR HERE WHEN EXECUTING STOP_SES() (previous kandle to last does not exist for some reason)
+                    order = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
+                    self.assess_order_status(order, 'GOING NEUTRAL')
+                elif self.data.loc[kprev, 'position'] == -1:
+                    order = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
+                    self.assess_order_status(order, 'GOING NEUTRAL')
+                elif self.data.loc[kprev, 'position'] == 0:
                     pass
-                
-        elif self.data.loc[klast, 'position'] == 0: # if position is neutral -> go/stay neutral
-            if (self.orders == 0): #no need to do anything if there is no order. This means is false neutral flag coming from prepare_recent_data() first iteration. Sesion has been stopped before any orders where placed.
-                return
-            if self.data.loc[kprev, 'position'] == 1: ####### ERROR HERE WHEN EXECUTING STOP_SES() (previous kandle to last does not exist for some reason)
-                order = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
-                self.assess_order_status(order, 'GOING NEUTRAL')
-            elif self.data.loc[kprev, 'position'] == -1:
-                order = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
-                self.assess_order_status(order, 'GOING NEUTRAL')
-            elif self.data.loc[kprev, 'position'] == 0:
-                pass
-            
-        elif self.data.loc[klast, 'position'] == -1: # if position is short -> go/stay short               
-            if self.data.loc[kprev, 'position'] == 0:
-                order = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
-                self.assess_order_status(order, 'GOING SHORT')
-            elif self.data.loc[kprev, 'position'] == 1:
-                if (self.orders == 0): # if it is first order after prepare_recent_data() it is not necessary to go neutral first.
+
+            elif self.data.loc[klast, 'position'] == -1: # if position is short -> go/stay short               
+                if self.data.loc[kprev, 'position'] == 0:
                     order = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
                     self.assess_order_status(order, 'GOING SHORT')
-                elif (self.orders > 0):
-                    order1 = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
-                    self.assess_order_status(order1, 'GOING NEUTRAL 1')
-                    order2 = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
-                    self.assess_order_status(order2, 'GOING SHORT 1')
-            elif self.data.loc[kprev, 'position'] == -1:
-                pass            
+                elif self.data.loc[kprev, 'position'] == 1:
+                    if (self.orders == 0): # if it is first order after prepare_recent_data() it is not necessary to go neutral first.
+                        order = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order, 'GOING SHORT')
+                    elif (self.orders > 0):
+                        order1 = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order1, 'GOING NEUTRAL 1')
+                        order2 = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order2, 'GOING SHORT 1')
+                elif self.data.loc[kprev, 'position'] == -1:
+                    pass
+                
+        except (BinanceAPIException, ConnectionResetError, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
+            client = utils.remake_client(testnet = self.testnet)
+            if self.data.loc[klast, 'position'] == 1: # if position is long -> go/stay long
+                if self.data.loc[kprev, 'position'] == 0:
+                    order = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
+                    self.assess_order_status(order, 'GOING LONG')
+                elif self.data.loc[kprev, 'position'] == -1:
+                    if (self.orders == 0): # if it is first order after prepare_recent_data() it is not necessary to go neutral first.
+                        order = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order, 'GOING LONG')
+                    elif (self.orders > 0):
+                        order1 = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order1, 'GOING NEUTRAL 1')
+                        order2 = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order2, 'GOING LONG 1' )
+                    elif self.data.loc[kprev, 'position'] == 1:
+                        pass
+
+            elif self.data.loc[klast, 'position'] == 0: # if position is neutral -> go/stay neutral
+                if (self.orders == 0): #no need to do anything if there is no order. This means is false neutral flag coming from prepare_recent_data() first iteration. Sesion has been stopped before any orders where placed.
+                    return
+                if self.data.loc[kprev, 'position'] == 1: ####### ERROR HERE WHEN EXECUTING STOP_SES() (previous kandle to last does not exist for some reason)
+                    order = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
+                    self.assess_order_status(order, 'GOING NEUTRAL')
+                elif self.data.loc[kprev, 'position'] == -1:
+                    order = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units, reduce_Only = True)
+                    self.assess_order_status(order, 'GOING NEUTRAL')
+                elif self.data.loc[kprev, 'position'] == 0:
+                    pass
+
+            elif self.data.loc[klast, 'position'] == -1: # if position is short -> go/stay short               
+                if self.data.loc[kprev, 'position'] == 0:
+                    order = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
+                    self.assess_order_status(order, 'GOING SHORT')
+                elif self.data.loc[kprev, 'position'] == 1:
+                    if (self.orders == 0): # if it is first order after prepare_recent_data() it is not necessary to go neutral first.
+                        order = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order, 'GOING SHORT')
+                    elif (self.orders > 0):
+                        order1 = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order1, 'GOING NEUTRAL 1')
+                        order2 = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units, reduce_Only = True)
+                        self.assess_order_status(order2, 'GOING SHORT 1')
+                elif self.data.loc[kprev, 'position'] == -1:
+                    pass                
+                
         
     def info_orders(self):
         pass
@@ -751,7 +775,14 @@ class Futures_trader():
         time.sleep(0.5)
         self.orders += 1
         order_time = order["updateTime"]
-        trades = self.client.futures_account_trades(symbol = self.symbol, startTime = order_time)
+        
+        
+        try:
+            trades = self.client.futures_account_trades(symbol = self.symbol, startTime = order_time)
+        except (BinanceAPIException, ConnectionResetError, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
+            client = utils.remake_client(testnet = self.testnet)
+            trades = self.client.futures_account_trades(symbol = self.symbol, startTime = order_time)
+        
         order_time = pd.to_datetime(order_time, unit = "ms")
         
         # extract data from order object
@@ -794,7 +825,7 @@ class Futures_trader():
     def emergency_position_eval_increase(self):
         print('executing emergency_position_eval_increase')
         # stablish long position before kandle is complete. Handle the position logic in execute_trades()
-        klast = self.kline_tlast
+        klast = self.klast
         self.data.loc[klast, 'position'] = 1
         self.calculate_returns()
         self.data.loc[klast, 'emg_pos'] = True
@@ -803,7 +834,7 @@ class Futures_trader():
     def emergency_position_eval_decrease(self):
         print('executing emergency_position_eval_decrease')
         # stablish short position before kandle is complete. Handle the position logic in execute_trades()
-        klast = self.kline_tlast
+        klast = self.klast
         self.data.loc[klast, 'position'] = 0
         self.calculate_returns()
         self.data.loc[klast, 'emg_pos'] = True
@@ -955,74 +986,74 @@ class Futures_trader():
         self.conn.quit()
 
 
-# In[3]:
+# In[20]:
 
 
 pd.set_option('display.max_rows', None)
 
 
-# In[4]:
+# In[21]:
 
 
 pd.set_option('display.max_columns', None)
 
 
-# In[5]:
+# In[22]:
 
 
-test_trader = Futures_trader(symbol='BTCUSDT', units='0.01', interval='15m', ema_slow=20, ema_fast=2, ema_signal=2, sma_slow=60, sma_fast=10, sl=0.001, tp=0.02, leverage=5, bot_name='futures_trader', testnet=True, assigned_duration_minutes=360, assigned_emergency_price_chg_pu=None, emg_chg_type=None)
+test_trader = Futures_trader(symbol='BTCUSDT', units='0.01', interval='1m', ema_slow=20, ema_fast=2, ema_signal=2, sma_slow=60, sma_fast=10, sl=0.001, tp=0.02, leverage=5, bot_name='futures_trader', testnet=True, assigned_duration_minutes=30, assigned_emergency_price_chg_pu=None, emg_chg_type=None)
 
 
-# In[6]:
+# In[23]:
 
 
 test_trader.start_trading()
 
 
-# In[291]:
-
-
-test_trader.trade_start_time_utc
-
-
-# In[288]:
-
-
-#test_trader.stop_ses()
-
-
-# In[7]:
-
-
-test_trader.data
-
-
-# In[285]:
-
-
-#test_trader.plot_results(width_bars=0.001)
-
-
-# In[287]:
+# In[36]:
 
 
 #test_trader.trade_start_time_utc
 
 
-# In[289]:
+# In[8]:
 
 
-test_trader.emergency_price_chg_flag
+#test_trader.trade_start_time_utc
 
 
-# In[290]:
+# In[37]:
 
 
-test_trader.close_pair
+#test_trader.stop_ses()
 
 
-# In[ ]:
+# In[31]:
 
 
-test_trader.
+#test_trader.data
+
+
+# In[32]:
+
+
+#test_trader.orders
+
+
+# In[33]:
+
+
+#test_trader.plot_results(width_bars=0.001)
+
+
+# In[34]:
+
+
+#test_trader.trade_start_time_utc
+
+
+# In[35]:
+
+
+#test_trader.emergency_price_chg_flag
 
