@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[3]:
+# In[1]:
 
 
 from binance.client import Client
@@ -16,36 +16,46 @@ import ta as ta
 import numpy as np
 import json
 import sys
-sys.path.append('C:\\Users\\Administrator\\Desktop\\utils')
+sys.path.append('\\Users\\Administrator\\Desktop\\utils')
 import utils
 import matplotlib.pyplot as plt
 import smtplib
 import time
 import json
-sys.path.append('C:\\Users\\Administrator\\Desktop\\data')
+sys.path.append('\\Users\\Administrator\\Desktop\\data')
 import tokyo_data
-
-
-# In[4]:
-
-
-pd.set_option('display.max_rows', None)
-
-
-# In[5]:
-
-
-pd.set_option('display.max_columns', None)
+import copy
 
 
 # In[2]:
 
 
-class Futures_trader():
+pd.set_option('display.max_rows', None)
+
+
+# In[3]:
+
+
+pd.set_option('display.max_columns', None)
+
+
+# In[1]:
+
+
+# VERSION 1.0 name: Futures_trader_emg_sltp_ema_v1_0
+# Version 1.0 DOES NOT INCLUDE the feature of long/short continuation trade, which means that, after a take profit long/short
+# has been executed, there is NOT GOING TO BE a continuation in the position by executing a corresponent long/short position.
+# Also the logic of sltp is included in update_position and it must be taken outside to analize with stream of data
+# Version 1.0.1 changes:
+# 1) Remove all emergency price check logic
+# 2) Change class name (remove 'emg')
+# 3) Create sltp_assess() to change the state of the sltp variables if necessary
+
+class Futures_trader_sltp_ema_v1_0_1():
     """
-    Class to perform live testing using Binance Futures testnet stream of data
+    Class to perform live testing using Binance Futures testnet stream of data. v1.0 (sl and tp should be working)
     """ 
-    def __init__(self, api_key=None, api_secret=None, testnet=None, symbol=None, units='0.006', interval=None, ema_slow=None, ema_fast=None, ema_signal=None, sma_slow=None, sma_fast=None, sl=None, tp=None, leverage=2, bot_name='macd_sma', assigned_duration_minutes=None, assigned_emergency_price_chg_pu=None, emg_chg_type='both'):
+    def __init__(self, api_key=None, api_secret=None, testnet=None, symbol=None, units='0.006', interval=None, ema_slow=None, ema_fast=None, ema_signal=None, sma_trend_slow=None, ema_trend_fast=None, sl=None, tp=None, leverage=2, bot_name='macd_sma', assigned_duration_minutes=None):
         """
         :param symbol: ticker in Binance, i.e. "BTCUSDT"
         :type symbol: str.
@@ -65,16 +75,16 @@ class Futures_trader():
         :param ema_signal: EMA signal for MACD calculation
         :type ema_signal: int.
         ----
-        :param sma_slow: SMA slow signal for sma cross calculation
-        :type sma_slow: int.
+        :param sma_trend_slow: SMA slow signal for sma cross calculation
+        :type sma_trend_slow: int.
         ----        
-        :param sma_fast: SMA fast signal for sma cross calculation
-        :type sma_fast: int.
+        :param ema_trend_fast: SMA fast signal for sma cross calculation
+        :type ema_trend_fast: int.
         ----            
         :param sl: per unit of closing price to execute stop loss
         :type sl: float
         ----
-        :param tp: per unit of closing price to execute take profit
+        :param tp: per unit of closing price to execute take profith
         :type tp: float
         ----
         :param leverage: leverage to use
@@ -84,14 +94,11 @@ class Futures_trader():
         :type bot_name: string
         ---
         :param testnet: if True, testnet is used, otherwise REAL Binance account
-        :type testnet: bool.
+        :type testnet: bool.print
         ----
         :param assigned_duration_minutes: amount of minutes that the sesion is expected to last, if no problems appear.
         :type assigned_duration_minutes: int.
         ----
-        :param: assigned_emergency_price_chg_pu: per unit threshold (in absolute value) above which a sell order will be executed for safety purposes.
-        In the case of a price increase the pct is taken as double of the value introduced (ratio 2 win : 1 lose)
-        :type assigned_emergency_price_chg_pu: float
         """
         self.api_key = api_key
         self.api_secret = api_secret
@@ -101,8 +108,8 @@ class Futures_trader():
         self.ema_slow = ema_slow
         self.ema_fast = ema_fast
         self.ema_signal = ema_signal 
-        self.sma_slow = sma_slow
-        self.sma_fast = sma_fast
+        self.sma_trend_slow = sma_trend_slow
+        self.ema_trend_fast = ema_trend_fast
         self.sl = sl
         self.tp = tp
         self.leverage = leverage
@@ -118,18 +125,25 @@ class Futures_trader():
         self.trade_start_time_utc = None # time in utc to be defined when the stream of OHLC starts ( this time
         self.twm = None # Initialize ws client
         self.cum_profits = 0 #accumulated profits in the trading sesion
-        self.initialize_emergency_price_parameters(assigned_emergency_price_chg_pu)
         self.conn = None #smtp connection
         self.login_mail() #initialize smtp google account
-        self.kline_tlast = None #date of latest kandle complete to use in define_strategy()
-        self.emg_chg_type = None # 'up' for price increase algo, 'down' for price decrease algo, None for both deactivated, 'both' for both activated
         self.td = self.calculate_td() # initialize delta t depending on interval chosen
-        self.keep_long = False # initialize flags for long position continuation
-        self.keep_short = False # initialize flags for short position continuation
         self.orders_list = []
         self.trades_list = []
         self.position = 0
         self.balance_list_USDT = []
+        self.tini_sltp = None
+        self.last_order = None
+        # Initialize flags
+        self.sl_flag_short = None
+        self.tp_flag_short = None
+        self.sl_flag_long = None
+        self.tp_flag_long = None
+        self.sltp_flag = None
+        self.sltp_tini = None
+        # flag to mark if the current position has been stablished by prepare_recent_data
+        # it is set to False once tpdate_position() is executed for the first time
+        self.is_initial = True
     
     def calculate_td(self):
         td = timedelta()
@@ -159,11 +173,11 @@ class Futures_trader():
         
         try:
             print('try 1')
-            self.client.futures_change_leverage(symbol = "BTCUSDT", leverage = self.leverage) #initialize leverage        
+            self.client.futures_change_leverage(symbol = self.symbol, leverage = self.leverage) #initialize leverage        
         except (BinanceAPIException, ConnectionResetError, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
             print('except 1')
             self.client = Client(api_key=self.api_key, api_secret=self.api_secret, tld = "com", testnet = self.testnet)
-            self.client.futures_change_leverage(symbol = "BTCUSDT", leverage = self.leverage) #initialize leverage        
+            self.client.futures_change_leverage(symbol = self.symbol, leverage = self.leverage) #initialize leverage        
             
         self.init_socket()
         
@@ -183,7 +197,8 @@ class Futures_trader():
         event_time = pd.to_datetime(msg["E"], unit = "ms")
         start_time = pd.to_datetime(msg["k"]["t"], unit = "ms")
         self.klast = start_time #latest kandle date, complete or incomplete
-        self.kprev = start_time - self.td 
+        self.kprev = start_time - self.td
+        self.tevent = event_time
         first   = float(msg["k"]["o"])
         high    = float(msg["k"]["h"])
         low     = float(msg["k"]["l"])
@@ -206,105 +221,34 @@ class Futures_trader():
         self.data.loc[start_time, 'macd_macd'] = macd_macd.iloc[-1]
         self.data.loc[start_time, 'macd_signal'] = macd_signal.iloc[-1]
         #update SMAs with each ws retrieval
-        sma_fast_ps = ta.trend.SMAIndicator(close=self.data.Close, window=self.sma_fast, fillna=False).sma_indicator()
-        sma_slow_ps = ta.trend.SMAIndicator(close=self.data.Close, window=self.sma_slow, fillna=False).sma_indicator()
+        ema_trend_fast_ps = ta.trend.EMAIndicator(close=self.data.Close, window=self.ema_trend_fast, fillna=False).ema_indicator()
+        sma_trend_slow_ps = ta.trend.SMAIndicator(close=self.data.Close, window=self.sma_trend_slow, fillna=False).sma_indicator()
         #assigning the smas values to ticker dataframe
-        self.data.loc[start_time, 'sma_fast_ps'] = sma_fast_ps.iloc[-1]
-        self.data.loc[start_time, 'sma_slow_ps'] = sma_slow_ps.iloc[-1]
+        self.data.loc[start_time, 'ema_trend_fast_ps'] = ema_trend_fast_ps.iloc[-1]
+        self.data.loc[start_time, 'sma_trend_slow_ps'] = sma_trend_slow_ps.iloc[-1]
         #initialize sltp_flag data to False
         self.data.loc[start_time, 'sl_flag_short'] = False
         self.data.loc[start_time, 'tp_flag_short'] = False
         self.data.loc[start_time, 'tp_flag_long'] = False
         self.data.loc[start_time, 'sl_flag_long'] = False 
-        #initialize emergency position
-        self.data.loc[start_time, 'emg_pos'] = False
         
-        #print(f"event_time = {event_time}, start_time = {start_time}, complete = {complete}, sma_fast_ps = {sma_fast_ps.iloc[-1]}, sma_slow_ps = {sma_slow_ps.iloc[-1]}")
+        #print(f"event_time = {event_time}, start_time = {start_time}, complete = {complete}, ema_trend_fast_ps = {ema_trend_fast_ps.iloc[-1]}, sma_trend_slow_ps = {sma_trend_slow_ps.iloc[-1]}")
         print(f"{round(float(close),3)}", end = "///", flush = True) # just print something to get a feedback (everything OK)        
         
         dt = datetime.utcnow() - self.trade_start_time_utc
         if ((dt) > timedelta(minutes=self.assigned_duration_minutes)):
-            self.stop_ses()        
-        
-        if (self.assigned_emergency_price_chg_pu != None):
-            self.run_emergency_price_check(close) # position is forced by this method without needing to call update_position
-        
-        if (complete == True and self.emergency_price_chg_flag==False):
+            self.stop_ses()
+            
+        if (self.is_initial == False and self.sltp_tini != None):    
+            self.assess_sltp()
+                
+        if complete == True:
             self.update_position()
             self.calculate_returns() 
             self.update_balance_USDT() # so that there are no NaN when position is not changed
             self.execute_trades()           
         else:
-            pass
-            
-    def initialize_emergency_price_parameters(self, assigned_emergency_price_chg_pu=None):
-        self.assigned_emergency_price_chg_pu = assigned_emergency_price_chg_pu # positive threshold of returns to trigger emergency price change method
-        self.close_pair = [] #two consecutive "close" prices to implement emergency price algorithm
-        self.emergency_price_chg_flag = False #flag to activate the signal
-        self.emergency_msg = None #message to be sent when emergency price signal activated
-        self.pu_price_chg = None #percetatge of change in price monitored every second
-        self.increase_counter = 0 #counter to monitor consecutive sharp increases in price per second
-        self.decrease_counter = 0 #counter to monitor consecutive sharp decreases in price per second       
-
-    def run_emergency_price_check(self, close=None):
-        if (len(self.close_pair) == 0):
-            self.close_pair.append(close)
-            return # there are not yet 2 values in the array to start the algo (self.pu_chg_flag is still "None")
-        
-        if (self.emg_chg_type != 'None'):
-            if (len(self.close_pair) == 1):
-                self.close_pair.insert(0,close)
-                self.pu_price_chg = ((self.close_pair[1]/self.close_pair[0])-1)
-            elif (len(self.close_pair) == 2):
-                self.close_pair.pop()
-                self.close_pair.insert(0,close)
-                self.pu_price_chg = ((self.close_pair[1]/self.close_pair[0])-1)
-                # condition for emergency price increase
-                if (self.emg_chg_type == 'up' or self.emg_chg_type == 'both'):
-                    if (self.pu_price_chg > 2 * self.assigned_emergency_price_chg_pu):
-                        self.emergency_price_chg_flag = True
-                        self.decrease_counter = 0
-                        self.increase_counter += 1
-                        self.emergency_msg = f"PRICE CHANGE - INCREASE - {self.increase_counter}"
-        #                 print(self.emergency_msg)
-                        if (self.increase_counter < 3):
-                            pass
-                        elif (self.increase_counter == 3):
-                            self.emergency_position_eval_increase()                               
-                            self.emergency_price_chg_flag = False
-                            self.increase_counter = 0
-                            self.end_socket()
-                            time.sleep(45)
-                            self.init_socket()
-                        else:
-                            pass
-
-                if (self.emg_chg_type == 'down' or self.emg_chg_type == 'both'):   
-                # condition for emergency price decrease                    
-                    if (self.pu_price_chg < -1*self.assigned_emergency_price_chg_pu):
-                        self.emergency_price_chg_flag = True
-                        self.increase_counter = 0
-                        self.decrease_counter += 1
-                        self.emergency_msg = f"PRICE CHANGE - DECREASE - {self.decrease_counter}"
-        #                 print(self.emergency_msg)                
-                        if (self.decrease_counter < 3):
-                            pass
-                        elif (self.decrease_counter == 3):
-                            self.emergency_position_eval_decrease()
-                            self.emergency_price_chg_flag = False
-                            self.decrease_counter = 0
-                            self.end_socket()
-                            time.sleep(45)
-                            self.init_socket()
-                        else:
-                            pass
-                    # condition for no emergency price change        
-                    else:
-                        self.emergency_price_chg_flag = False
-                        self.increase_counter = 0
-                    self.decrease_counter = 0  
-            else:
-                raise Exception(f"len(self.close_pair)={len(self.close_pair)} --- Unexpected value")     
+            pass         
         
     def prepare_recent_data(self):
         '''
@@ -323,10 +267,10 @@ class Futures_trader():
         ema_diff = self.ema_slow + self.ema_signal + 2
         
         # Necessary extra periods to have enough data to calculate the strategy parameters at the present moment
-        if (ema_diff >= self.sma_slow):
+        if (ema_diff >= self.sma_trend_slow):
             extra_periods = ema_diff * 2
         else:
-            extra_periods = self.sma_slow * 2
+            extra_periods = self.sma_trend_slow * 2
             
         td = timedelta()
         if 'm' in self.interval:
@@ -357,11 +301,11 @@ class Futures_trader():
         self.data['macd_macd'] = macd_macd
         self.data['macd_signal'] = macd_signal
         #calculating SMA fast and slow
-        sma_fast_ps = ta.trend.SMAIndicator(close=self.data.Close, window=self.sma_fast, fillna=False).sma_indicator()
-        sma_slow_ps = ta.trend.SMAIndicator(close=self.data.Close, window=self.sma_slow, fillna=False).sma_indicator()
+        ema_trend_fast_ps = ta.trend.EMAIndicator(close=self.data.Close, window=self.ema_trend_fast, fillna=False).ema_indicator()
+        sma_trend_slow_ps = ta.trend.SMAIndicator(close=self.data.Close, window=self.sma_trend_slow, fillna=False).sma_indicator()
         #assigning the smas values to ticker dataframe
-        self.data['sma_fast_ps'] = sma_fast_ps
-        self.data['sma_slow_ps'] = sma_slow_ps
+        self.data['ema_trend_fast_ps'] = ema_trend_fast_ps
+        self.data['sma_trend_slow_ps'] = sma_trend_slow_ps
         #initialize dataframe columns for prepared data
         self.data['position'] = 0
         self.data['macd_inv_sign'] = 0
@@ -373,6 +317,10 @@ class Futures_trader():
             self.data['tp_flag_short'] = False
             self.data['sl_flag_long'] = False
             self.data['tp_flag_long'] = False
+            self.data['sltp_tini'] = None
+            self.data['sltp_tend'] = None
+            self.data['sltp_pini'] = None
+            self.data['sltp_pend'] = None 
         else: 
             pass
         self.data["Complete"] = [True for row in range(len(self.data)-1)] + [False]
@@ -381,8 +329,6 @@ class Futures_trader():
         #it is mots likely not to be used, but updated.
     
     def stablish_initial_position(self):
-        # for avoiding unnecessary NaN values, initialize emg_pos
-        self.data['emg_pos'] = False
         
         # --------------------- MACD CROSS SIGNAL + SMA CONFIRMATION ---------------------
 
@@ -391,7 +337,7 @@ class Futures_trader():
         ht_macd_diff_plusone_neg = self.data.macd_diff < 0        
        
         #sma short confirmation
-        sma_conf_short = self.data.sma_fast_ps < self.data.sma_slow_ps
+        sma_conf_short = self.data.ema_trend_fast_ps < self.data.sma_trend_slow_ps
         
         #stablish short positions
         self.data.loc[ht_macd_diff_pos & ht_macd_diff_plusone_neg, 'macd_inv_sign'] = -1
@@ -402,7 +348,7 @@ class Futures_trader():
         ht_macd_diff_plusone_pos = self.data.macd_diff > 0
         
         #sma long confirmation
-        sma_conf_long = self.data.sma_fast_ps > self.data.sma_slow_ps        
+        sma_conf_long = self.data.ema_trend_fast_ps > self.data.sma_trend_slow_ps        
         
         #stablish buy positions
         self.data.loc[ht_macd_diff_neg & ht_macd_diff_plusone_pos, 'macd_inv_sign'] = 1
@@ -413,8 +359,8 @@ class Futures_trader():
         # --------------------- SMA CROSS SIGNAL + MACD_DIFF CONFIRMATION -----------------
         
         #sma cross short
-        ht_sma_pos = self.data.sma_fast_ps.shift(1) > self.data.sma_slow_ps.shift(1)
-        ht_sma_plusone_neg = self.data.sma_fast_ps < self.data.sma_slow_ps
+        ht_sma_pos = self.data.ema_trend_fast_ps.shift(1) > self.data.sma_trend_slow_ps.shift(1)
+        ht_sma_plusone_neg = self.data.ema_trend_fast_ps < self.data.sma_trend_slow_ps
         
         #macd_diff short confirmation
         macd_diff_conf_short = self.data.macd_diff < 0
@@ -424,8 +370,8 @@ class Futures_trader():
         self.data.loc[macd_diff_conf_short, 'macd_diff_conf'] = -1
         
         #sma cross long
-        ht_sma_neg = self.data.sma_fast_ps.shift(1) < self.data.sma_slow_ps.shift(1)
-        ht_sma_plusone_pos = self.data.sma_fast_ps > self.data.sma_slow_ps        
+        ht_sma_neg = self.data.ema_trend_fast_ps.shift(1) < self.data.sma_trend_slow_ps.shift(1)
+        ht_sma_plusone_pos = self.data.ema_trend_fast_ps > self.data.sma_trend_slow_ps        
         
         #macd_diff long confirmation
         macd_diff_conf_long = self.data.macd_diff > 0
@@ -542,49 +488,79 @@ class Futures_trader():
         
         
                
-    def run_sltp_check(self, data=None):
-        
+    def assess_sltp(self):
+        print('executing assess_sltp')
+        # just for convenience
+        kprev = self.kprev
         klast = self.klast
-        kprev = self.kprev         
-        tp_flag_short = self.data.Close.loc[klast] <= (self.data.Close.loc[kprev] * (1 - self.tp)) # condition for stop loss in short position ### ERROR HERE WHILE STREAMING
-        sl_flag_short = self.data.Close.loc[klast] > (self.data.Close.loc[kprev] * (1 + self.sl)) # condition for take profit in short position       
-        tp_flag_long = self.data.Close.loc[klast] >= (self.data.Close.loc[kprev] * (1 + self.tp)) # condition for stop loss in long position
-        sl_flag_long = self.data.Close.loc[klast] < (self.data.Close.loc[kprev] * (1 - self.sl)) # condition for take profit in long position          
         
+        # Check if position in previous kandle is short and if so, analize sltp condition
         if (self.data.position.loc[kprev] == -1):
-            if (tp_flag_short):
-                self.data.loc[klast, 'tp_flag_short'] = True               
-                self.data.loc[klast, 'position'] = 0
-                return True
-            elif sl_flag_short:
-                self.data.loc[klast, 'sl_flag_short'] = True                 
-                self.data.loc[klast, 'position'] = 0
-                return True
+            print('inside of branch 1')
+            # condition for take profit in short position            
+            self.tp_flag_short = self.data.Close.loc[klast] <= (self.data.Close.loc[kprev] * (1 - self.tp)) 
+            # condition for stop loss in short position                   
+            self.sl_flag_short = self.data.Close.loc[klast] > (self.data.Close.loc[kprev] * (1 + self.sl))
+            if self.tp_flag_short:             
+                self.data.loc[klast, 'tp_flag_short'] = True
+                self.sltp_flag = True
+            elif self.sl_flag_short:
+                self.data.loc[klast, 'sl_flag_short'] = True  
+                self.sltp_flag = True          
             else:
                  pass
-             
-        elif (self.data.position.loc[kprev] == 1):
-            if (tp_flag_long):
-                self.data.loc[klast, 'tp_flag_long'] = True           
-                self.data.loc[klast, 'position'] = 0
-                return True
-            elif sl_flag_long:
-                self.data.loc[klast, 'sl_flag_long'] = True                 
-                self.data.loc[klast, 'position'] = 0
-                return True
+        
+        # Check if position in previous kandle is long and if so, analize sltp condition
+        if (self.data.position.loc[kprev] == 1):
+            print('inside of branch 2')
+            # condition for take profit in long position            
+            self.tp_flag_long = self.data.Close.loc[klast] >= (self.data.Close.loc[kprev] * (1 + self.tp))         
+            # condition for stop loss in long position               
+            self.sl_flag_long = self.data.Close.loc[klast] < (self.data.Close.loc[kprev] * (1 - self.sl))             
+            if self.tp_flag_long:
+                self.data.loc[klast, 'tp_flag_long'] = True
+                self.sltp_flag = True                
+            elif self.sl_flag_long:
+                self.data.loc[klast, 'sl_flag_long'] = True
+                self.sltp_flag = True                
             else:
                 pass
                 
-        elif (self.data.position.loc[kprev] == 0):
-            pass
+        if (self.sltp_flag):
+            print('inside of branch 3')            
+            # if sltp is True initialize all flags for the next iteration and process the position           
+            # neutral position
+            self.data.loc[klast, 'position'] = 0
+            # register when the order was placed for the current sltp event
+            self.data.loc[klast, 'sltp_tini'] = self.sltp_tini
+            # register when the position ends due to sltp
+            self.data.loc[klast, 'sltp_tend'] = self.tevent
+            # register price when the order was placed for the current sltp event
+            self.data.loc[klast, 'sltp_pini'] = self.data.Close.loc[self.sltp_tini] 
+            # register price when the position ends due to sltp
+            self.data.loc[klast, 'sltp_pend'] = self.data.Close.loc[klast]
+            self.execute_trades()
+            self.calculate_returns()
+            # initialize the flag for the next iteration
         
-        else:
-            raise Exception(f"(self.data.position.loc[kprev] = {self.data.position.loc[kprev]}) --- Unexpected value")
-        
-        self.data = self.data.copy()
-        return False
-    
+        # if no sltp signal is triggered then do nothing
+
     def update_position(self):
+        
+        # flag to mark that the current position has not been stablished by prepare_recent_data
+        self.is_initial = False
+        
+        # if sltp is triggered by assess_sltp do not update the position for self.klast kandle since it has been already updated
+        # and wait for the next kandle
+
+        if (self.sltp_flag):
+            self.sltp_flag = False
+            self.tp_flag_short = False
+            self.sl_flag_short = False
+            self.tp_flag_long = False
+            self.sl_flag_long = False             
+            return
+        
         klast = self.klast #
         kprev = self.kprev #
                 
@@ -600,14 +576,14 @@ class Futures_trader():
         if (ht_macd_diff_neg and ht_macd_diff_plusone_pos): #
             self.data.loc[klast, 'macd_inv_sign'] = 1 #
         elif (ht_macd_diff_pos and ht_macd_diff_plusone_neg): #
-            self.data.loc[klast, 'macd_inv_sign'] = -1 #
+            self.data.loc[klast, 'macd_inv_sign'] = -1 #e
         else: #
             self.data.loc[klast, 'macd_inv_sign'] = 0 #
         
         #sma long confirmation
-        sma_conf_long = self.data.sma_fast_ps.loc[klast] > self.data.sma_slow_ps.loc[klast] #
+        sma_conf_long = self.data.ema_trend_fast_ps.loc[klast] > self.data.sma_trend_slow_ps.loc[klast] #
         #sma short confirmation
-        sma_conf_short = self.data.sma_fast_ps.loc[klast] < self.data.sma_slow_ps.loc[klast] #
+        sma_conf_short = self.data.ema_trend_fast_ps.loc[klast] < self.data.sma_trend_slow_ps.loc[klast] #
         if sma_conf_long: #
             self.data.loc[klast, 'sma_conf'] = 1 #
         elif sma_conf_short: #
@@ -620,11 +596,11 @@ class Futures_trader():
         # --------------------- SMA CROSS SIGNAL + MACD_DIFF CONFIRMATION -----------------
 
         #sma cross long
-        ht_sma_neg = self.data.sma_fast_ps.loc[kprev] < self.data.sma_slow_ps.loc[kprev] #
-        ht_sma_plusone_pos = self.data.sma_fast_ps.loc[klast] > self.data.sma_slow_ps.loc[klast] #        
+        ht_sma_neg = self.data.ema_trend_fast_ps.loc[kprev] < self.data.sma_trend_slow_ps.loc[kprev] #
+        ht_sma_plusone_pos = self.data.ema_trend_fast_ps.loc[klast] > self.data.sma_trend_slow_ps.loc[klast] #        
         #sma cross short
-        ht_sma_pos = self.data.sma_fast_ps.loc[kprev] > self.data.sma_slow_ps.loc[kprev] #
-        ht_sma_plusone_neg = self.data.sma_fast_ps.loc[klast] < self.data.sma_slow_ps.loc[klast] #
+        ht_sma_pos = self.data.ema_trend_fast_ps.loc[kprev] > self.data.sma_trend_slow_ps.loc[kprev] #
+        ht_sma_plusone_neg = self.data.ema_trend_fast_ps.loc[klast] < self.data.sma_trend_slow_ps.loc[klast] #
                                                                                         
         if (ht_sma_neg and ht_sma_plusone_pos): #
             self.data.loc[klast, 'sma_inv_sign'] = 1 #
@@ -657,28 +633,23 @@ class Futures_trader():
             
         elif (condshort1 == True or condshort2 == True and condlong1 == False and condlong2 == False):
             self.data.loc[klast, 'position'] = -1        
-        
+    
         elif (condlong1 == False and condshort1 == False and condlong2 == False and condshort2 == False):
             if (self.data.loc[kprev, 'position'] == 1):
                 self.data.loc[klast, 'position'] = 1
+                
             elif (self.data.loc[kprev, 'position'] == -1):
                 self.data.loc[klast, 'position'] = -1
+  
             else:
                 self.data.loc[klast, 'position'] = 0      
         else:    
             raise Exception(f"Unexpected branch assessment in update_position() method at time={klast}")
         
-        # if stltp signal, overwrite the position accordingly
-        self.calculate_returns()    
-        
-        if (self.sl != None and self.tp != None):
-            sltp_is_found = self.run_sltp_check(data=self.data)
-            if (sltp_is_found):
-                return
-            else:
-                pass         
+        self.calculate_returns()          
     
-    def execute_trades(self): 
+    def execute_trades(self):
+        klast = self.klast
 
         if self.data["position"].iloc[-1] == 1: # if position is long -> go/stay long
             if self.position == 0:
@@ -687,15 +658,21 @@ class Futures_trader():
             elif self.position == -1:
                 order = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = 2 * float(self.units))
                 self.assess_order_status(order, "GOING LONG")
+            # Register initial timestamp for sltp    
+            self.sltp_tini = klast
             self.position = 1
+        
         elif self.data["position"].iloc[-1] == 0: # if position is neutral -> go/stay neutral
             if self.position == 1:
                 order = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units)
-                self.assess_order_status(order, "GOING NEUTRAL") 
+                self.assess_order_status(order, "GOING NEUTRAL")        
             elif self.position == -1:
                 order = self.client.futures_create_order(symbol = self.symbol, side = "BUY", type = "MARKET", quantity = self.units)
                 self.assess_order_status(order, "GOING NEUTRAL")
+            # Whenever a neutral position is adopted "restart" sltp time
+            self.sltp_tini = None
             self.position = 0
+        
         if self.data["position"].iloc[-1] == -1: # if position is short -> go/stay short
             if self.position == 0:
                 order = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = self.units)
@@ -703,15 +680,13 @@ class Futures_trader():
             elif self.position == 1:
                 order = self.client.futures_create_order(symbol = self.symbol, side = "SELL", type = "MARKET", quantity = 2 * float(self.units))
                 self.assess_order_status(order, "GOING SHORT")
+            # Register initial timestamp for sltp    
+            self.sltp_tini = klast                
             self.position = -1  
-
-    def info_orders(self):
-        pass
-    
        
     def assess_order_status(self, order=None, GOING=None):
         print('executing assess_order_status')
-        time.sleep(1) #ensure that the order is created and that is going to be found
+        time.sleep(3) #ensure that the order is created and that is going to be found
         try:  
             print('try 3')
             order_details = self.client.futures_get_order(symbol = self.symbol, orderId = order["orderId"]) # check order status
@@ -745,19 +720,22 @@ class Futures_trader():
         self.trades_list.append(trades)
         # extract data from order object
         df = pd.DataFrame(trades)
-        columns = ["qty", "quoteQty", "commission","realizedPnl"]
-        for column in columns:
-            df[column] = pd.to_numeric(df[column], errors = "coerce")
-        base_units = round(df.qty.sum(), 5)
-        quote_units = round(df.quoteQty.sum(), 5)
-        commission = -round(df.commission.sum(), 5)
-        real_profit = round(df.realizedPnl.sum(), 5)
-        price = round(quote_units / base_units, 5)
-        
-
-        # calculate cumulative trading profits
-        self.cum_profits += round((commission + real_profit), 5)
-        
+        self.last_order = df
+        msg2 = 'order with missing info'
+        if (len(df)>0):
+            columns = ["qty", "quoteQty", "commission","realizedPnl"]
+            for column in columns:
+                df[column] = pd.to_numeric(df[column], errors = "coerce")
+            base_units = round(df.qty.sum(), 5)
+            quote_units = round(df.quoteQty.sum(), 5)
+            commission = -round(df.commission.sum(), 5)
+            real_profit = round(df.realizedPnl.sum(), 5)
+            price = round(quote_units / base_units, 5)
+            self.cum_profits += round((commission + real_profit), 5)
+            msg2 = "{} | Base_Units = {} | Quote_Units = {} | Price = {} ".format(order_time, base_units, quote_units, price)
+        else:
+            'Trades data not posible to retrieve during this iteration'
+           
         #update balance taking into account comisions
         self.update_balance_USDT()
                  
@@ -765,19 +743,13 @@ class Futures_trader():
         print(2 * "\n" + 100* "-")
         msg1 = "{} | {}".format(order_time, going)
         print(msg1) 
-        msg2 = "{} | Base_Units = {} | Quote_Units = {} | Price = {} ".format(order_time, base_units, quote_units, price)
         print(msg2)
         msg3 = "{} | net lev acum. = {} | net no lev acum. = {} | hold = {} ".format(order_time, round(float(self.data.loc[self.klast, 'macd_simple_ret_net_lev_acum']),3), round(float(self.data.loc[self.klast, 'macd_multiple_net_acum']), 3), round(float(self.data.loc[self.klast, 'multiple_hold_acum']),3))
         print(msg3)
         msg4 = "{} | Balance USDT = {}".format(order_time, self.data.loc[self.klast,'balance_USDT'])
         print(msg4)
-        msg5 = ""
-
-        if (self.emergency_price_chg_flag == True):
-            msg5 = "price changed in 1s in pct: {}, which is more/less than the imposed pct: {} (imposed pct x2 if positive) ".format(round(self.pu_price_chg, 6), self.assigned_emergency_price_chg_pu) 
-            print(msg5)
         print(100 * "-" + "\n")
-        mail_msg = f"Subject: trade executed. Bot name: {self.bot_name}. \n\n {msg1} \n\n {msg2} \n\n {msg3} \n\n {msg4} \n\n {msg5}"
+        mail_msg = f"Subject: trade executed. Bot name: {self.bot_name}. \n\n {msg1} \n\n {msg2} \n\n {msg3} \n\n {msg4}"
         try:
             print('try 5')
             self.conn.sendmail('jpxcar6@gmail.com', 'jpxcar6@gmail.com', f"{mail_msg}")
@@ -796,24 +768,6 @@ class Futures_trader():
                 self.balance_USDT_raw = item['balance']
                 self.data.loc[klast, 'balance_USDT'] = round(float(self.balance_USDT_raw),3)
                 print(self.data.loc[klast, 'balance_USDT'])
-            
-    def emergency_position_eval_increase(self):
-        print('executing emergency_position_eval_increase')
-        # stablish long position before kandle is complete. Handle the position logic in execute_trades()
-        klast = self.klast
-        self.data.loc[klast, 'position'] = 1
-        self.calculate_returns()
-        self.data.loc[klast, 'emg_pos'] = True
-        self.execute_trades()
-            
-    def emergency_position_eval_decrease(self):
-        print('executing emergency_position_eval_decrease')
-        # stablish short position before kandle is complete. Handle the position logic in execute_trades()
-        klast = self.klast
-        self.data.loc[klast, 'position'] = 0
-        self.calculate_returns()
-        self.data.loc[klast, 'emg_pos'] = True
-        self.execute_trades()
 
     def end_socket(self):
         self.twm.stop()
@@ -841,7 +795,7 @@ class Futures_trader():
     def plot_results(self, start_plot=None, end_plot=None, width_bars=0.1):
         # from IPython.core.display import display, HTML
         # display(HTML("<style>.container { width:100% !important; }</style>"))
-        data_ready_raw = self.data.dropna(subset=['macd_diff', 'macd_macd', 'macd_signal', 'sma_fast_ps', 'sma_slow_ps', 'multiple_hold_acum', 'macd_simple_ret_net_lev_acum', 'macd_multiple_net_acum', 'balance_USDT']).copy()
+        data_ready_raw = self.data.dropna(subset=['macd_diff', 'macd_macd', 'macd_signal', 'ema_trend_fast_ps', 'sma_trend_slow_ps', 'multiple_hold_acum', 'macd_simple_ret_net_lev_acum', 'macd_multiple_net_acum']).copy()
         data_ready = data_ready_raw[self.trade_start_time_utc-self.td:]
         
         if (len(data_ready) < 2):
@@ -883,9 +837,9 @@ class Futures_trader():
                 colors.append('r')
                 
         close_ax.plot(data_ready.index, data_ready.Close) #plot the data without shifting
-        close_ax.plot(data_ready.index, data_ready.sma_fast_ps)
-        close_ax.plot(data_ready.index, data_ready.sma_slow_ps)
-        close_ax.legend(['Close', 'sma_fast_ps', 'sma_slow_ps'])
+        close_ax.plot(data_ready.index, data_ready.ema_trend_fast_ps)
+        close_ax.plot(data_ready.index, data_ready.sma_trend_slow_ps)
+        close_ax.legend(['Close', 'ema_trend_fast_ps', 'sma_trend_slow_ps'])
         
         #shift one position the inv_sign only for plotting the signal in the day after is found, without shifting the
         #Close prices
@@ -921,7 +875,7 @@ class Futures_trader():
     
     def save_to_files(self):
         print('executing save_to_files')
-        file_name = f"{self.bot_name}__{self.symbol}__{self.interval}__eslow_{self.ema_slow}_efast_{self.ema_fast}_esign_{self.ema_signal}__smas_{self.sma_slow}__smaf_{self.sma_fast}__duration_{self.run_end_delta}min_upto_{self.assigned_duration_minutes}__ordersnum_{self.orders}" 
+        file_name = f"{self.bot_name}__{self.symbol}__{self.interval}__eslow_{self.ema_slow}_efast_{self.ema_fast}_esign_{self.ema_signal}__smas_{self.sma_trend_slow}__smaf_{self.ema_trend_fast}__duration_{self.run_end_delta}min_upto_{self.assigned_duration_minutes}__ordersnum_{self.orders}" 
         outfile = open(file_name, 'wb')
         self.data.to_csv(outfile, index = True, header = True, sep = ',', encoding = 'utf-8', date_format ='%Y-%m-%d-%H:%M')
         outfile.close()
@@ -932,22 +886,18 @@ class Futures_trader():
             "ema_slow": self.ema_slow,
             "ema_fast": self.ema_fast,
             "ema_signal": self.ema_signal,
-            "sma_slow": self.sma_slow,
-            "sma_fast": self.sma_fast,
+            "sma_trend_slow": self.sma_trend_slow,
+            "ema_trend_fast": self.ema_trend_fast,
             "sl": self.sl,
             "tp": self.tp,
             "leverage": self.leverage,
             "testnet": self.testnet,
             "assigned_duration_minutes": self.assigned_duration_minutes,
-            "assigned_emergency_price_chg_pu": self.assigned_emergency_price_chg_pu,
             "run_end_time_utc": self.run_end_time_utc.strftime("%Y-%m-%d-%H:%M:%S"),
             "run_end_delta": self.run_end_delta,
             "orders": self.orders,
             "trade_start_time_utc": self.trade_start_time_utc.strftime("%Y-%m-%d-%H:%M:%S"),
             "profit": self.cum_profits,
-            "emergency_price_chg_flag": self.emergency_price_chg_flag,
-            "emergency_msg": self.emergency_msg,
-            "pu_price_chg": self.pu_price_chg,
             "bot_name": self.bot_name  
         }
         f = open(f"{file_name}.txt", "a")
@@ -964,4 +914,36 @@ class Futures_trader():
     def logout_mail(self):
         print('executing logout_mail')
         self.conn.quit()
+
+
+# In[30]:
+
+
+
+
+#test_trader = Futures_trader_sltp_ema_v1_0_1(api_key=tokyo_data.TESTNET_API_KEY , api_secret=tokyo_data.TESTNET_API_SECRET, testnet=True, symbol='BTCUSDT', units='0.02', interval='1m', ema_slow=25, ema_fast=10, ema_signal=10, sma_trend_slow=100, ema_trend_fast=20, sl=0.0005, tp=0.0012, leverage=20, bot_name='futures_trader', assigned_duration_minutes=72000)
+
+
+# In[27]:
+
+
+#test_trader.start_trading()
+
+
+# In[28]:
+
+
+#test_trader.stop_ses()
+
+
+# In[29]:
+
+
+#test_trader.data
+
+
+# In[ ]:
+
+
+
 
