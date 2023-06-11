@@ -49,32 +49,12 @@ Run the cells to start the trading bot.
 
 ## Bot flowchart
 
-flowchart TB
-    start_trading --> stream_candles
-    stream_candles --> DataStreaming
-    DataStreaming --> assigned_duration_minutes
-    assigned_duration_minutes{SessionDurationReached?} -- Yes --> CheckForNeutralPosition
-    CheckForNeutralPosition{IsPositionNeutral?} -- Yes --> StopSession
-    CheckForNeutralPosition{IsPositionNeutral?} -- No --> ExecuteTradesForNeutralPosition
-    ExecuteTradesForNeutralPosition --> StopSession
-    assigned_duration_minutes{SessionDurationReached?} -- No --> SltpAssessment
-    SltpAssessment{SltpTriggered?} -- Yes --> ExecuteTradesSltp
-    SltpAssessment{SltpTriggered?} -- No --> KandleCompletionAssessment
-    KandleCompletionAssessment{IsKandleComplete?} -- Yes --> ExecuteTrades
-    KandleCompletionAssessment{IsKandleComplete?} -- No --> DataStreaming
-    ExecuteTradesSltp --> assess_order_status
-    assess_order_status{IsOrderFilled?} -- Yes --> report_trade
-    report_trade --> ContinueDataStreaming
-    assess_order_status{IsOrderFilled?} -- No --> RaiseException
-    subgraph ExecuteTrades[ExecuteTrades]
-        update_position[update_position]
-        execute_trades_normal[execute_trades]
-    end
-    subgraph ExecuteTradesSltp [ExecuteTradesSltp]
-        ForceUpdatePosition[ForceUpdatePosition]
-        execute_trades_sltp[execute_trades]
-    end
-    ExecuteTrades --> assess_order_status
+<figure>
+  <figcaption>Bot flowchart</figcaption>
+  <br />
+  <br />
+  <img src="./flowchart.jpg" alt="flowchart">
+</figure>
 
 ## Usage
 
