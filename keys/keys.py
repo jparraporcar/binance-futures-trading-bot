@@ -1,0 +1,8 @@
+TESTNET_API_KEY = 'xxx'
+TESTNET_API_SECRET = 'xxx'
+LIVE_API_KEY = 'xxx'
+LIVE_API_SECRET = 'xxx'
+
+
+
+

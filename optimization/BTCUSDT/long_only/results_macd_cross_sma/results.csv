@@ -1,4 +1,0 @@
-macd_slow_opt,macd_fast_opt,macd_signal_opt,sma_slow,sma_fast,multiple_hold,ann_log_mean_hold,ann_log_std_hold,sharpe_ratio_hold,multiple_macd_strategy,ann_log_mean_macd,ann_log_std_macd,sharpe_ratio_macd,multiple_macd_strategy_net,ann_log_mean_macd_net,ann_log_std_macd_net,sharpe_ratio_macd_net,success_trades_net,failure_trades_net,success_trades_net_pct,failure_trades_net_pct,total_trades,start_opt,end_opt,opt_type,gross_or_net,interval,symbol
-20,6,6,60,10,0.83,-0.74,0.52,-1.44,1.13,0.49,0.3,1.6,1.01,0.03,0.31,0.1,43,91,32.1,67.9,134,2022-08-09-00:00,2022-11-08-16:00,macd_sma,gross,15m,BTCUSDT
-35,14,26,140,50,0.58,-1.08,0.69,-1.57,1.16,0.3,0.34,0.9,1.11,0.2,0.34,0.59,28,32,46.7,53.3,60,2022-05-09-00:00,2022-11-08-16:00,macd_sma,gross,30m,BTCUSDT
-15,14,22,60,20,0.47,-0.9,0.66,-1.37,1.22,0.23,0.3,0.79,1.15,0.17,0.3,0.57,24,40,37.5,62.5,64,2022-01-09-00:00,2022-11-08-16:00,macd_sma,gross,1h,BTCUSDT
