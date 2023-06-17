@@ -6,13 +6,13 @@ This project is a cryptocurrency bot, developed in Python and run using a Jupyte
 
 - **MACD (Moving Average Convergence Divergence)**: This indicator identifies potential buy and sell signals that are to be confirmed by the other indicator. The indicator sends 2 types of signals:
   
-1. Buy/sell signal: when the fast EMA crosses above the slow SMA a buy signal is generated (conversely for a sell signal), to be confirmed by the MACD buy confirmation signal.
-2. Buy/sell confirmation: upon a buy signal from MACD indicator, the confirmation takes place when the fast MA is located above the slow MA (conversely for a sell confirmation.
+  1. Buy/sell signal: when the fast EMA crosses above the slow SMA a buy signal is generated (conversely for a sell signal), to be confirmed by the MACD buy confirmation signal.
+  2. Buy/sell confirmation: upon a buy signal from MACD indicator, the confirmation takes place when the fast MA is located above the slow MA (conversely for a sell confirmation.
   
 - **Moving Averages (SMA & EMA)**: This indicator identifies potential buy and sell signals that are to be confirmed by the other indicator. The indicator sends 2 types of signals:
 
-1. Buy/sell signal: when the MACD crosses the 0 line above, a buy signal is generated (conversely for sell signal)
-2. Buy/sell confirmation: upon a buy signal from the MA indicators, if the macd is above the 0 line this would confirm the buy signal (conversely for a sell signal)
+  1. Buy/sell signal: when the MACD crosses the 0 line above, a buy signal is generated (conversely for sell signal)
+  2. Buy/sell confirmation: upon a buy signal from the MA indicators, if the macd is above the 0 line this would confirm the buy signal (conversely for a sell signal)
 
 Note: Conversely, the same applies for a sell signal
 
