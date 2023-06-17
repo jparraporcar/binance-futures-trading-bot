@@ -13,7 +13,7 @@ Note: Conversely, the same applies for a sell signal
 ## Table of Contents
 
 - [Installation](#installation)
-- [Usage](#usage)
+- [Flowchart](#flowchart)
 - [Technologies](#technologies)
 - [Trading Indicators](#trading-indicators)
 - [Screenshots](#screenshots)
@@ -47,18 +47,18 @@ jupyter notebook
 4. Once Jupyter Notebook is open, navigate to the notebook file (`.ipynb` extension) and open it.
 Run the cells to start the trading bot.
 
-## Bot flowchart
+## Flowchart
 
 <figure>
-  <figcaption>Bot flowchart</figcaption>
   <br />
   <br />
   <img src="./flowchart.jpg" alt="flowchart">
 </figure>
 
-## Usage
+Note:
+- CamelCase: is used to describe processes between function invocations during the bot workflow.
+- snake_case: is used to describe actual methods of the bot class.
 
-[...Detailed usage instructions...]
 
 ## Technologies
 
