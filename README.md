@@ -16,7 +16,6 @@ Note: Conversely, the same applies for a sell signal
 - [Flowchart](#flowchart)
 - [Technologies](#technologies)
 - [Trading Indicators](#trading-indicators)
-- [Screenshots](#screenshots)
 - [Contact](#contact)
 
 ## Installation
@@ -80,10 +79,6 @@ The bot employs a blend of technical indicators for formulating robust trading s
 1. MACD (Moving Average Convergence Divergence)
 2. SMA (Simple Moving Average)
 3. EMA (Exponential Moving Average)
-
-## Screenshots
-
-[...Add relevant screenshots of the project here...]
 
 ## Contact
 
