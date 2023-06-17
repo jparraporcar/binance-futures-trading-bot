@@ -1,12 +1,18 @@
-# Crypto Trading Bot
+# binance-futures-trading-bot
 
 ## Description
 
 This project is a cryptocurrency bot, developed in Python and run using a Jupyter Notebook. The bot operates on the Binance Futures API and utilizes two technical indicators to formulate trading signals:
 
-- **MACD (Moving Average Convergence Divergence)**: This indicator identifies potential buy and sell signals. A bullish signal is identified when the MACD line crosses above the signal line, which the bot checks for confirmation.
+- **MACD (Moving Average Convergence Divergence)**: This indicator identifies potential buy and sell signals that are to be confirmed by the other indicator. The indicator sends 2 types of signals:
+  
+1. Buy/sell signal: when the fast EMA crosses above the slow SMA a buy signal is generated (conversely for a sell signal), to be confirmed by the MACD buy confirmation signal.
+2. Buy/sell confirmation: upon a buy signal from MACD indicator, the confirmation takes place when the fast MA is located above the slow MA (conversely for a sell confirmation.
+  
+- **Moving Averages (SMA & EMA)**: This indicator identifies potential buy and sell signals that are to be confirmed by the other indicator. The indicator sends 2 types of signals:
 
-- **Moving Averages (SMA & EMA)**: To confirm the signal from the MACD, the bot checks the position of the Exponential Moving Average (EMA) relative to the Simple Moving Average (SMA). For a buy signal to be confirmed, the EMA should be above the SMA.
+1. Buy/sell signal: when the MACD crosses the 0 line above, a buy signal is generated (conversely for sell signal)
+2. Buy/sell confirmation: upon a buy signal from the MA indicators, if the macd is above the 0 line this would confirm the buy signal (conversely for a sell signal)
 
 Note: Conversely, the same applies for a sell signal
 
@@ -30,12 +36,12 @@ To install and use the Trading Bot, follow these steps:
 
 1. Clone the repository
 ```
-git clone https://github.com/jparraporcar/trading-bot.git
+git clone https://github.com/jparraporcar/binance-futures-trading-bot.git
 ```
 
 2. Navigate into the project directory
 ```
-cd trading-bot
+cd binance-futures-trading-bot
 ```
 
 3. Launch Jupyter Notebook in this directory
@@ -57,7 +63,6 @@ Run the cells to start the trading bot.
 Note:
 - CamelCase: is used to describe processes between function invocations during the bot workflow.
 - snake_case: is used to describe actual methods of the bot class.
-
 
 ## Technologies
 
