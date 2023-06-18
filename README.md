@@ -1,3 +1,9 @@
+<h1 align="center">Portfolio Use Only</h1>
+
+> :warning: **Important Note**
+
+This repository and its contents, including installation and deployment instructions, are provided for portfolio review and demonstration purposes only. While the repository is publicly viewable and its code can be executed for review purposes, no license is granted for any further use, distribution, or reproduction of the materials contained herein. Any such activities are prohibited without express permission from the repository owner. Please contact the owner for any questions or requests for use.
+
 # binance-futures-trading-bot
 
 ## Description
