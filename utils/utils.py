@@ -88,13 +88,13 @@ def get_history_v3(symbol, interval, start, end = None, testnet=None):
     Function to format data from get_historical_klines from Binance
     '''
     if (testnet==False):
-        api_key = keys.TESTNET_API_KEY
-        api_secret = keys.TESTNET_API_SECRET
+        api_key = keys.LIVE_API_KEY
+        api_secret = keys.LIVE_API_SECRET
         client = Client(api_key=api_key, api_secret=api_secret, tld = 'com', testnet = testnet)
 
     if (testnet==True): 
-        api_key = keys.LIVE_API_KEY
-        api_secret = keys.LIVE_API_SECRET
+        api_key = keys.TESTNET_API_KEY
+        api_secret = keys.TESTNET_API_SECRET
         client = Client(api_key=api_key, api_secret=api_secret, tld = "com", testnet = testnet)
     try:                  
         bars = client.get_historical_klines(symbol = symbol, interval = interval,
@@ -127,13 +127,13 @@ def futures_history(symbol, interval, start, end = None, testnet=None):
     '''
     client = None
     if (testnet==False):
-        api_key = keys.TESTNET_API_KEY
-        api_secret = keys.TESTNET_API_SECRET
-        client = Client(api_key=api_key, api_secret=api_secret, tld = 'com', testnet = testnet)
-
-    if (testnet==True): 
         api_key = keys.LIVE_API_KEY
         api_secret = keys.LIVE_API_SECRET
+        client = Client(api_key=api_key, api_secret=api_secret, tld = 'com', testnet = testnet)
+
+    if (testnet==True):
+        api_key = keys.TESTNET_API_KEY
+        api_secret = keys.TESTNET_API_SECRET 
         client = Client(api_key=api_key, api_secret=api_secret, tld = "com", testnet = testnet)
     try:                  
         bars = client.futures_historical_klines(symbol = symbol, interval = interval,
