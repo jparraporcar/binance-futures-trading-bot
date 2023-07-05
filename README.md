@@ -80,7 +80,7 @@ This project is implemented with the following technologies and libraries:
 4. Pandas
 5. Numpy
 6. Matplotlib
-7. TA-Lib (Python wrapper)
+7. ta
 8. smtplib
 
 ## Trading Indicators
